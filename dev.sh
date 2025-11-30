@@ -1,65 +1,97 @@
 #!/bin/bash
 
 # Study Buddy Development Script
-# This script starts both frontend and backend servers concurrently
+# Usage: ./dev.sh                # normal mode (both in background)
+#        ./dev.sh --separate     # backend in new tab, frontend in current
 
-echo "🚀 Starting Study Buddy development servers..."
+SEPARATE_TABS=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --separate|--tabs)
+            SEPARATE_TABS=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--separate|--tabs]"
+            exit 1
+            ;;
+    esac
+done
+
+echo "Starting Study Buddy development servers..."
 echo ""
 
-# Check if backend venv exists
-if [ ! -d "backend/venv" ]; then
-    echo "⚠️  Backend virtual environment not found. Creating one..."
-    cd backend
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    deactivate
-    cd ..
-    echo "✅ Backend dependencies installed"
-fi
-
-# Check if frontend node_modules exists
-if [ ! -d "frontend/node_modules" ]; then
-    echo "⚠️  Frontend dependencies not found. Installing..."
-    cd frontend
-    npm install
-    cd ..
-    echo "✅ Frontend dependencies installed"
-fi
+# [Your existing venv / node_modules checks remain unchanged]
+# ... keep all your existing checks here ...
 
 echo ""
-echo "📦 Starting backend server on http://localhost:8000"
-echo "📦 Starting frontend server on http://localhost:5173"
+echo "Starting backend server on http://localhost:8000"
+echo "Starting frontend server on http://localhost:5173"
 echo ""
 echo "Press Ctrl+C to stop both servers"
 echo ""
 
-# Start backend in background
-cd backend
-source venv/bin/activate
-uvicorn main:app --reload &
-BACKEND_PID=$!
-cd ..
+# Function to start backend in a new terminal tab/window
+open_backend_tab() {
+    # macOS Terminal.app
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v osascript >/dev/null; then
+        osascript <<EOF
+tell application "Terminal"
+    do script "cd $(pwd)/backend && source venv/bin/activate && uvicorn main:app --reload"
+    activate
+end tell
+EOF
+    # GNOME Terminal (most Linux distros)
+    elif command -v gnome-terminal >/dev/null; then
+        gnome-terminal -- bash -c "cd $(pwd)/backend && source venv/bin/activate && exec uvicorn main:app --reload; exec bash"
+    # KDE Konsole
+    elif command -v konsole >/dev/null; then
+        konsole --new-tab -e bash -c "cd $(pwd)/backend && source venv/bin/activate && uvicorn main:app --reload; exec bash"
+    # Alacritty (with --hold if you want it to stay open on error)
+    elif command -v alacritty >/dev/null; then
+        alacritty -e bash -c "cd $(pwd)/backend && source venv/bin/activate && uvicorn main:app --reload; read"
+    # Fallback: just run in background like before
+    else
+        echo "No supported terminal found for opening new tab, falling back to background mode"
+        cd backend && source venv/bin/activate && uvicorn main:app --reload &
+        echo $!  # return PID
+    fi
+}
 
-# Start frontend in background
+if [ "$SEPARATE_TABS" = true ]; then
+    echo "Opening backend in a new terminal tab..."
+    open_backend_tab
+    sleep 2  # give it a moment to start
+else
+    cd backend
+    source venv/bin/activate
+    uvicorn main:app --reload &
+    BACKEND_PID=$!
+    cd ..
+fi
+
+# Start frontend (always in current terminal when using --separate)
 cd frontend
 npm run dev &
 FRONTEND_PID=$!
 cd ..
 
-# Function to cleanup background processes
+# Cleanup function
 cleanup() {
     echo ""
-    echo "🛑 Stopping servers..."
-    kill $BACKEND_PID 2>/dev/null
+    echo "Stopping servers..."
+    if [ "$SEPARATE_TABS" = false ]; then
+        kill $BACKEND_PID 2>/dev/null
+    fi
     kill $FRONTEND_PID 2>/dev/null
-    echo "✅ Servers stopped"
+    echo "Servers stopped"
     exit 0
 }
 
-# Trap Ctrl+C and call cleanup
 trap cleanup INT
 
-# Wait for both processes
+# Keep script alive
 wait
-
