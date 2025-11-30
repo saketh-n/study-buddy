@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import type { ConceptInputProps } from '../types';
 
-export const ConceptInput = ({ onConceptsSubmit, isLoading }: ConceptInputProps) => {
+export const ConceptInput = ({ onGenerateTopics, isLoading }: ConceptInputProps) => {
   const [inputText, setInputText] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (inputText.trim() && !isLoading) {
-      onConceptsSubmit(inputText.trim());
+      onGenerateTopics(inputText.trim());
     }
   };
 
@@ -25,7 +25,7 @@ export const ConceptInput = ({ onConceptsSubmit, isLoading }: ConceptInputProps)
             id="concepts"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Paste any text, article, or notes here. AI will extract key topics to study...&#10;&#10;Example: Photosynthesis is the process by which plants convert light energy into chemical energy. Newton's Laws describe the relationship between motion and forces..."
+            placeholder="Paste any text, article, or notes here. AI will extract key topics...&#10;&#10;Example: A network bridge is a device that connects multiple network segments at the data link layer. Bridges filter traffic based on MAC addresses..."
             className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y min-h-[160px] text-gray-800 disabled:bg-gray-100 disabled:cursor-not-allowed"
             rows={6}
             disabled={isLoading}
@@ -42,10 +42,10 @@ export const ConceptInput = ({ onConceptsSubmit, isLoading }: ConceptInputProps)
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span>Generating Flashcards...</span>
+              <span>Extracting Topics...</span>
             </>
           ) : (
-            'Generate Flashcards'
+            'Extract Topics'
           )}
         </button>
       </form>

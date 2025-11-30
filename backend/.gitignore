@@ -13,6 +13,13 @@ venv.bak/
 # Environment variables
 .env
 
+# Logs
+*.log
+api.log
+
+# Cache
+prompt_cache/
+
 # IDE
 .vscode/
 .idea/

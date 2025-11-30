@@ -23,12 +23,15 @@ study-buddy/
 ## Features
 
 - 🤖 **AI-Powered Topic Extraction** - Paste any text and Claude Sonnet intelligently extracts study topics
+- 🎯 **Context-Aware Definitions** - Automatically generates definitions based on how terms are used in your text
+- 💾 **Persistent Caching** - Previous study sessions are saved and can be reused instantly
+- 📚 **Recent Sessions** - Click on cached prompts to load them without re-entering text
 - 📝 **Smart Text Processing** - Works with articles, notes, textbooks, or any educational content
-- 🎴 **Interactive Flashcards** - Click to flip and reveal detailed explanations
-- ⚡ **On-Demand Explanations** - Generate explanations only when needed using Claude AI
-- 🔄 **Real-time Loading States** - Visual feedback during AI generation
+- 🎴 **Interactive Flashcards** - Click to flip and reveal context-aware explanations
+- 🔄 **Regenerate Explanations** - Get alternative explanations with one click
+- ⚡ **Real-time Loading States** - Visual feedback during AI generation
 - 🎨 **Modern, Responsive UI** - Beautiful interface with Tailwind CSS
-- 🚀 **Fast & Efficient** - Async operations with per-card loading states
+- 🚀 **Fast & Efficient** - Async operations with smooth animations
 
 ## Getting Started
 
@@ -103,37 +106,79 @@ The backend API will be available at `http://localhost:8000`
 
 ## How to Use
 
-1. **Paste Your Study Material**
+### Quick Start: Use Recent Sessions
+1. **Browse Cached Prompts**
+   - See your recent study sessions at the top
+   - Each shows a descriptive theme and topic count
+   - Click any session to instantly reload it (no API call needed!)
+
+### Step 1: Extract Topics (New Content)
+2. **Paste Your Study Material**
    - Copy any educational text (Wikipedia articles, lecture notes, textbook passages)
    - Paste it into the text area on the Study Buddy homepage
+   - Click "Extract Topics"
 
-2. **Generate Flashcards**
-   - Click "Generate Flashcards"
-   - Watch as AI extracts key topics from your text
-   - Flashcards appear automatically in a grid
+3. **AI Analyzes Your Text**
+   - Claude AI creates a short theme describing your content (e.g., "Networking fundamentals")
+   - Extracts all key topics with brief context notes
+   - Context helps distinguish meanings (e.g., "bridge" → "networking device" vs "physical structure")
+   - Results are saved to disk and cached for future use
 
-3. **Study with Flashcards**
-   - Click any flashcard to flip it over
-   - Click "Generate Explanation" to get AI-powered details
+### Step 2: Edit Topics List
+4. **Review & Edit Topics**
+   - See the AI-generated theme at the top (e.g., "Machine learning basics")
+   - See all extracted topics in an editable list
+   - **Delete** topics you don't want to study
+   - **Edit** topic names or context notes
+   - **Add** new topics manually
+   - Topics are ready when you are!
+
+### Step 3: Generate Flashcards
+5. **Create Flashcards**
+   - Click "Generate Flashcards from Topics"
+   - AI generates detailed explanations for each topic
+   - Flashcards appear in a grid layout
+
+### Step 4: Study
+6. **Study with Flashcards**
+   - Click any flashcard to flip it over and see the explanation
+   - Click "Regenerate Explanation" for alternative wording
    - Flip back by clicking anywhere on the card
 
-4. **Manage Your Set**
-   - Use "Clear All Flashcards" to start fresh
-   - Generate multiple sets from different texts
+### Benefits
+- ✅ **Control**: Edit topics before generating flashcards
+- ✅ **Efficiency**: Cached results save API calls & time
+- ✅ **Persistence**: Cache survives server restarts
+- ✅ **Flexibility**: Add/remove topics as needed
+- ✅ **Context-Aware**: Definitions match your specific domain
+- ✅ **Quick Access**: Reuse previous sessions with one click
 
 ### Example Workflow
 
 ```
-Input: "Photosynthesis is the process by which plants convert 
-        sunlight into energy. It occurs in chloroplasts..."
+Step 1: Input Text
+"A network bridge is a device that connects multiple network 
+segments at the data link layer. Bridges filter traffic 
+based on MAC addresses to reduce network congestion..."
 
-AI Extracts Topics:
-✓ Photosynthesis
-✓ Chloroplasts  
-✓ Light-dependent reactions
-✓ Calvin Cycle
+Step 2: AI Extracts Topics with Context
+✓ Network Bridge (context: "networking device")
+✓ Data Link Layer (context: "OSI model layer")
+✓ MAC Addresses (context: "hardware addressing")
+✓ Traffic Filtering (context: "network optimization")
 
-Click a card → Generate Explanation → Study!
+Step 3: Edit Topics (Optional)
+- Delete "Traffic Filtering" (already know it)
+- Add "OSI Model" manually
+- Edit context for clarity
+
+Step 4: Generate Flashcards
+- AI creates detailed explanations using the context
+- Each flashcard has 2-4 sentence explanation
+
+Step 5: Study!
+- Flip cards to review
+- Regenerate explanations if needed
 ```
 
 ## Tech Stack

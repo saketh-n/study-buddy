@@ -1,3 +1,10 @@
+// Topic with context for editing
+export interface Topic {
+  id: string;
+  name: string;
+  context: string; // Brief context note (e.g., "networking device", "programming language")
+}
+
 export interface Flashcard {
   id: string;
   topic: string;
@@ -6,8 +13,31 @@ export interface Flashcard {
 }
 
 export interface ConceptInputProps {
-  onConceptsSubmit: (text: string) => void;
+  onGenerateTopics: (text: string) => void;
   isLoading?: boolean;
+}
+
+export interface CachedPrompt {
+  cache_key: string;
+  prompt_theme: string;
+  topic_count: number;
+  timestamp: string;
+}
+
+export interface CachedPromptsProps {
+  cachedPrompts: CachedPrompt[];
+  onSelectPrompt: (cacheKey: string) => void;
+  onDeletePrompt: (cacheKey: string) => void;
+  onRegeneratePrompt: (cacheKey: string) => void;
+  isLoading?: boolean;
+}
+
+export interface TopicsListProps {
+  topics: Topic[];
+  promptTheme?: string;
+  onUpdateTopics: (topics: Topic[]) => void;
+  onGenerateFlashcards: () => void;
+  isGenerating?: boolean;
 }
 
 export interface FlashcardProps {
@@ -21,8 +51,14 @@ export interface FlashcardListProps {
 }
 
 // API Response types
-export interface TopicsResponse {
-  topics: string[];
+export interface TopicsListResponse {
+  prompt_theme: string;
+  topics: Topic[];
+  cache_key: string;
+}
+
+export interface FlashcardsResponse {
+  flashcards: Flashcard[];
 }
 
 export interface ExplanationResponse {
@@ -30,6 +66,13 @@ export interface ExplanationResponse {
   explanation: string;
 }
 
-export interface FlashcardResponse {
-  flashcards: Flashcard[];
+export interface CacheCheckResponse {
+  cached: boolean;
+  cache_key?: string;
+  prompt_theme?: string;
+  topics?: Topic[];
+}
+
+export interface ListCachedPromptsResponse {
+  prompts: CachedPrompt[];
 }
