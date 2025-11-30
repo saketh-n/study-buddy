@@ -8,7 +8,13 @@ import {
   regenerateCachedPrompt,
   checkCache, 
   extractTopics, 
-  generateFlashcards, 
+  generateFlashcards,
+  getAllFlashcards,
+  updateFlashcard,
+  deleteFlashcard,
+  sendChatMessage,
+  clearChatHistory,
+  distillChatToExplanation,
   explainTopic, 
   APIError 
 } from './services/api';
@@ -25,9 +31,10 @@ function App() {
   const [originalText, setOriginalText] = useState<string>('');
   const [cacheInfo, setCacheInfo] = useState<string | null>(null);
 
-  // Load cached prompts on mount
+  // Load cached prompts and saved flashcards on mount
   useEffect(() => {
     loadCachedPrompts();
+    loadSavedFlashcards();
   }, []);
 
   const loadCachedPrompts = async () => {
@@ -36,7 +43,15 @@ function App() {
       setCachedPrompts(response.prompts);
     } catch (err) {
       console.error('Error loading cached prompts:', err);
-      // Don't show error to user, just log it
+    }
+  };
+
+  const loadSavedFlashcards = async () => {
+    try {
+      const response = await getAllFlashcards();
+      setFlashcards(response.flashcards);
+    } catch (err) {
+      console.error('Error loading flashcards:', err);
     }
   };
 
@@ -50,8 +65,6 @@ function App() {
       setTopics(response.topics);
       setPromptTheme(response.prompt_theme);
       setCacheInfo(`✓ Loaded "${response.prompt_theme}" from cache`);
-      // Clear flashcards when loading a cached prompt
-      setFlashcards([]);
     } catch (err) {
       if (err instanceof APIError) {
         setError(err.message);
@@ -69,19 +82,12 @@ function App() {
     
     try {
       await deleteCachedPrompt(cacheKey);
-      
-      // Reload cached prompts list
       await loadCachedPrompts();
       
-      // If the deleted prompt was currently loaded, clear it
       const deletedPrompt = cachedPrompts.find(p => p.cache_key === cacheKey);
       if (deletedPrompt) {
         setCacheInfo(`✓ Deleted "${deletedPrompt.prompt_theme}"`);
       }
-      
-      // Clear current topics if they match the deleted cache
-      // (We can't easily check this without storing current cache_key, so we'll just keep them)
-      
     } catch (err) {
       if (err instanceof APIError) {
         setError(err.message);
@@ -103,10 +109,6 @@ function App() {
       setPromptTheme(response.prompt_theme);
       setCacheInfo(`✓ Regenerated "${response.prompt_theme}" with fresh AI extraction`);
       
-      // Clear flashcards when regenerating
-      setFlashcards([]);
-      
-      // Reload cached prompts list
       await loadCachedPrompts();
     } catch (err) {
       if (err instanceof APIError) {
@@ -127,28 +129,23 @@ function App() {
     setOriginalText(text);
     
     try {
-      // Check cache first
       const cacheResult = await checkCache(text);
       
       if (cacheResult.cached && cacheResult.topics && cacheResult.prompt_theme) {
-        // Use cached results
         setTopics(cacheResult.topics);
         setPromptTheme(cacheResult.prompt_theme);
         setCacheInfo(`✓ Loaded "${cacheResult.prompt_theme}" from cache (saved API call)`);
         setIsExtractingTopics(false);
-        // Reload cached prompts list
         await loadCachedPrompts();
         return;
       }
 
-      // Call the API to extract topics with context from the text
       const response = await extractTopics(text);
       
       setTopics(response.topics);
       setPromptTheme(response.prompt_theme);
       setCacheInfo(`✓ Extracted topics for "${response.prompt_theme}" and cached`);
       
-      // Reload cached prompts list to show the new entry
       await loadCachedPrompts();
     } catch (err) {
       if (err instanceof APIError) {
@@ -171,16 +168,12 @@ function App() {
     setError(null);
     
     try {
-      // Call the API to generate flashcards from the edited topics
       const response = await generateFlashcards(topics, originalText);
       
-      // Convert API flashcards to our format
-      const newFlashcards: Flashcard[] = response.flashcards.map(card => ({
-        ...card,
-        isGeneratingExplanation: false,
-      }));
-
-      setFlashcards(newFlashcards);
+      // Add to existing flashcards and reload from server
+      await loadSavedFlashcards();
+      
+      setCacheInfo(`✓ Generated ${response.flashcards.length} flashcards`);
     } catch (err) {
       if (err instanceof APIError) {
         setError(err.message);
@@ -193,11 +186,92 @@ function App() {
     }
   };
 
+  const handleUpdateFlashcard = async (id: string, field: 'topic' | 'explanation', value: string) => {
+    try {
+      const updated = await updateFlashcard(id, field, value);
+      setFlashcards(prev => prev.map(card => card.id === id ? updated : card));
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to update flashcard.');
+      }
+      console.error('Error updating flashcard:', err);
+    }
+  };
+
+  const handleDeleteFlashcard = async (id: string) => {
+    if (!window.confirm('Delete this flashcard?')) return;
+    
+    try {
+      await deleteFlashcard(id);
+      setFlashcards(prev => prev.filter(card => card.id !== id));
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to delete flashcard.');
+      }
+      console.error('Error deleting flashcard:', err);
+    }
+  };
+
+  const handleSendChatMessage = async (flashcardId: string, message: string) => {
+    try {
+      const response = await sendChatMessage(flashcardId, message);
+      setFlashcards(prev => prev.map(card => 
+        card.id === flashcardId 
+          ? { ...card, chat_history: response.chat_history }
+          : card
+      ));
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to send chat message.');
+      }
+      console.error('Error sending chat:', err);
+    }
+  };
+
+  const handleClearChat = async (flashcardId: string) => {
+    try {
+      await clearChatHistory(flashcardId);
+      setFlashcards(prev => prev.map(card => 
+        card.id === flashcardId 
+          ? { ...card, chat_history: [] }
+          : card
+      ));
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to clear chat history.');
+      }
+      console.error('Error clearing chat:', err);
+    }
+  };
+
+  const handleDistillChat = async (flashcardId: string) => {
+    try {
+      const updated = await distillChatToExplanation(flashcardId);
+      setFlashcards(prev => prev.map(card => 
+        card.id === flashcardId ? updated : card
+      ));
+      setCacheInfo(`✓ Updated explanation from chat`);
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to distill chat.');
+      }
+      console.error('Error distilling chat:', err);
+    }
+  };
+
   const handleGenerateExplanation = async (id: string, topic: string) => {
-    // Find the topic to get its context
     const topicData = topics.find(t => t.name === topic);
     
-    // Set loading state for this specific flashcard
     setFlashcards(prevCards =>
       prevCards.map(card =>
         card.id === id
@@ -208,10 +282,8 @@ function App() {
     setError(null);
 
     try {
-      // Call the API to generate explanation with context
       const explanation = await explainTopic(topic, topicData?.context);
       
-      // Update the flashcard with the explanation
       setFlashcards(prevCards =>
         prevCards.map(card =>
           card.id === id
@@ -227,7 +299,6 @@ function App() {
       }
       console.error('Error generating explanation:', err);
       
-      // Reset loading state on error
       setFlashcards(prevCards =>
         prevCards.map(card =>
           card.id === id
@@ -241,7 +312,6 @@ function App() {
   const handleClearAll = () => {
     setTopics([]);
     setPromptTheme('');
-    setFlashcards([]);
     setError(null);
     setOriginalText('');
     setCacheInfo(null);
@@ -256,7 +326,7 @@ function App() {
             Study Buddy
           </h1>
           <p className="text-gray-600 text-lg">
-            Extract topics, edit them, then generate AI-powered flashcards
+            AI-powered flashcards with chat and editing
           </p>
         </header>
 
@@ -321,22 +391,27 @@ function App() {
           />
         )}
 
-        {/* Clear Button */}
-        {(topics.length > 0 || flashcards.length > 0) && (
+        {/* Clear Topics Button */}
+        {topics.length > 0 && (
           <div className="text-center mb-8">
             <button
               onClick={handleClearAll}
               disabled={isExtractingTopics || isGeneratingFlashcards}
               className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Clear All & Start Over
+              Clear Topics & Start Over
             </button>
           </div>
         )}
 
-        {/* Step 3: Flashcard List */}
+        {/* Step 3: Flashcard List with Subjects */}
         <FlashcardList 
           flashcards={flashcards}
+          onUpdate={handleUpdateFlashcard}
+          onDelete={handleDeleteFlashcard}
+          onSendChatMessage={handleSendChatMessage}
+          onClearChat={handleClearChat}
+          onDistillChat={handleDistillChat}
           onGenerateExplanation={handleGenerateExplanation}
         />
       </div>

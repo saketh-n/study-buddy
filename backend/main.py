@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import hashlib
+import uuid
 from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
@@ -25,8 +26,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create prompt_cache directory if it doesn't exist
+# Create directories
 CACHE_DIR = Path("prompt_cache")
+FLASHCARDS_FILE = Path("flashcards_storage.json")
+
 CACHE_DIR.mkdir(exist_ok=True)
 logger.info(f"Cache directory ready at: {CACHE_DIR.absolute()}")
 
@@ -35,7 +38,7 @@ app = FastAPI(title="Study Buddy API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite's default port
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,11 +47,12 @@ app.add_middleware(
 # Initialize Anthropic client
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# In-memory cache for quick access (loaded from disk on startup)
+# In-memory caches
 prompt_cache: Dict[str, Dict] = {}
+flashcards_storage: Dict[str, Dict] = {}  # {flashcard_id: flashcard_data}
 
 
-# Load existing cache from disk on startup
+# Storage functions
 def load_cache_from_disk():
     """Load all cached prompts from disk into memory."""
     try:
@@ -56,7 +60,7 @@ def load_cache_from_disk():
             try:
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    cache_key = cache_file.stem  # filename without .json
+                    cache_key = cache_file.stem
                     prompt_cache[cache_key] = data
                     logger.info(f"Loaded cache entry: {cache_key}")
             except Exception as e:
@@ -91,8 +95,35 @@ def delete_cache_from_disk(cache_key: str):
         return False
 
 
-# Load cache on startup
+def load_flashcards_from_disk():
+    """Load all flashcards from disk into memory."""
+    global flashcards_storage
+    try:
+        if FLASHCARDS_FILE.exists():
+            with open(FLASHCARDS_FILE, 'r', encoding='utf-8') as f:
+                flashcards_storage = json.load(f)
+            logger.info(f"Loaded {len(flashcards_storage)} flashcards from disk")
+        else:
+            flashcards_storage = {}
+            logger.info("No existing flashcards file found, starting fresh")
+    except Exception as e:
+        logger.error(f"Error loading flashcards from disk: {e}")
+        flashcards_storage = {}
+
+
+def save_flashcards_to_disk():
+    """Save all flashcards to disk."""
+    try:
+        with open(FLASHCARDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(flashcards_storage, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved {len(flashcards_storage)} flashcards to disk")
+    except Exception as e:
+        logger.error(f"Error saving flashcards to disk: {e}")
+
+
+# Load on startup
 load_cache_from_disk()
+load_flashcards_from_disk()
 
 
 # Request/Response Models
@@ -104,12 +135,27 @@ class Topic(BaseModel):
     id: str
     name: str
     context: str
+    subject: str  # NEW: e.g., "Networking", "Storage", "Security"
 
 
 class TopicsListResponse(BaseModel):
-    prompt_theme: str  # Compressed, descriptive one-line summary
+    prompt_theme: str
     topics: List[Topic]
     cache_key: str
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: str
+
+
+class Flashcard(BaseModel):
+    id: str
+    topic: str
+    subject: str  # NEW: for categorization
+    explanation: str
+    chat_history: List[ChatMessage] = []
 
 
 class GenerateFlashcardsRequest(BaseModel):
@@ -117,14 +163,27 @@ class GenerateFlashcardsRequest(BaseModel):
     original_text: Optional[str] = None
 
 
-class Flashcard(BaseModel):
-    id: str
-    topic: str
-    explanation: str
-
-
 class FlashcardsResponse(BaseModel):
     flashcards: List[Flashcard]
+
+
+class UpdateFlashcardRequest(BaseModel):
+    topic: Optional[str] = None
+    explanation: Optional[str] = None
+
+
+class ChatRequest(BaseModel):
+    flashcard_id: str
+    message: str
+
+
+class ChatResponse(BaseModel):
+    response: str
+    chat_history: List[ChatMessage]
+
+
+class DistillChatRequest(BaseModel):
+    flashcard_id: str
 
 
 class TopicExplanationRequest(BaseModel):
@@ -159,13 +218,12 @@ class ListCachedPromptsResponse(BaseModel):
     prompts: List[CachedPrompt]
 
 
-# Helper function to generate cache key
+# Helper functions
 def generate_cache_key(text: str) -> str:
     """Generate a unique cache key from text content."""
     return hashlib.md5(text.encode()).hexdigest()
 
 
-# Helper function to call Claude
 async def call_claude(prompt: str, system_prompt: str = None, max_tokens: int = 16384) -> str:
     """Call Claude Sonnet API with the given prompt."""
     try:
@@ -179,14 +237,11 @@ async def call_claude(prompt: str, system_prompt: str = None, max_tokens: int = 
             kwargs["system"] = system_prompt
         
         logger.info(f"Calling Claude API with max_tokens={max_tokens}")
-        logger.info(f"System prompt: {system_prompt[:100] if system_prompt else 'None'}...")
-        logger.info(f"User prompt: {prompt[:200]}...")
         
         message = anthropic_client.messages.create(**kwargs)
         response_text = message.content[0].text
         
         logger.info(f"Claude API Response (length: {len(response_text)} chars)")
-        logger.info(f"Full response: {response_text}")
         logger.info(f"Stop reason: {message.stop_reason}")
         logger.info(f"Tokens used - Input: {message.usage.input_tokens}, Output: {message.usage.output_tokens}")
         
@@ -196,6 +251,7 @@ async def call_claude(prompt: str, system_prompt: str = None, max_tokens: int = 
         raise HTTPException(status_code=500, detail=f"Error calling Claude API: {str(e)}")
 
 
+# Endpoints
 @app.get("/")
 async def root():
     return {"message": "Welcome to Study Buddy API"}
@@ -219,7 +275,6 @@ async def list_cached_prompts():
             timestamp=data.get("timestamp", "")
         ))
     
-    # Sort by timestamp (most recent first)
     prompts.sort(key=lambda x: x.timestamp, reverse=True)
     
     logger.info(f"Returning {len(prompts)} cached prompts")
@@ -267,10 +322,7 @@ async def delete_cached_prompt(cache_key: str):
     if cache_key not in prompt_cache:
         raise HTTPException(status_code=404, detail="Cache key not found")
     
-    # Delete from memory
     del prompt_cache[cache_key]
-    
-    # Delete from disk
     delete_cache_from_disk(cache_key)
     
     logger.info(f"Deleted cached prompt: {cache_key}")
@@ -279,14 +331,10 @@ async def delete_cached_prompt(cache_key: str):
 
 @app.post("/api/regenerate-cached/{cache_key}", response_model=TopicsListResponse)
 async def regenerate_cached_prompt(cache_key: str):
-    """
-    Regenerate topics for a cached prompt.
-    This will delete the old cache entry and create a new one with fresh AI extraction.
-    """
+    """Regenerate topics for a cached prompt with fresh AI extraction."""
     if cache_key not in prompt_cache:
         raise HTTPException(status_code=404, detail="Cache key not found")
     
-    # Get the original text from cache
     cached_data = prompt_cache[cache_key]
     original_text = cached_data.get("original_text", "")
     
@@ -295,132 +343,21 @@ async def regenerate_cached_prompt(cache_key: str):
     
     logger.info(f"Regenerating cached prompt: {cache_key}")
     
-    # Delete old cache entry
     del prompt_cache[cache_key]
     delete_cache_from_disk(cache_key)
     
-    # Re-extract topics using the same logic as extract_topics
-    system_prompt = """You are an obsessive, hyper-granular study-flashcard generator. 
-Your only goal is to fragment any input text into the absolute maximum number of discrete, testable topics — never summarize, never group, never omit details.
-
-Hard rules you MUST obey (no exceptions):
-- Extract 100–250+ topics from any dense technical text of 500–3000 words. Never return fewer than 80 topics.
-- Every acronym, initialism, proper noun, named entity, number, port, version, company, product name, command, error code, formula, law, theorem, specific example, or concrete value mentioned MUST become its own separate topic.
-- If something has both a name and a number/value (e.g. port 22, HTTP 1.1, RAID 10, 192.168.0.0/16), create separate topics for the name and the exact value when possible, or include the value in the topic name.
-- Never bundle lists — each item in any bullet list, port list, company list, command list, etc. becomes its own topic.
-- Context notes are strictly 2–6 words only.
-- Topic names are 1–6 words, maximally specific (examples: "SSH port 22", "Kafka port 9092", "Google DNS 8.8.8.8", "RAID 10", "Python 3.11", "GDPR Article 5").
-- Overlap and redundancy are required and encouraged.
-- Include minor details most humans would skip (versions, years, specific error messages, exact ranges, obscure flags, etc.).
-- There is no such thing as "too many topics" — err on the side of 300 if in doubt.
-
-Return your response as valid JSON in this exact format:
-{
-  "prompt_theme": "short descriptive theme here",
-  "topics": [
-    {"name": "Topic Name", "context": "brief context note"},
-    {"name": "Another Topic", "context": "another brief note"}
-  ]
-}
-
-Examples of good prompt_themes:
-- "Networking fundamentals and protocols"
-- "Machine learning basics"
-- "Photosynthesis process overview"
-- "Ancient Roman history"
-
-Return ONLY the JSON object, no other text or formatting."""
-
-    prompt = f"""Analyze the following text and:
-1. Create a short theme/title (3-7 words) that summarizes what this text is about
-2. Extract ALL discrete study topics with brief contextual notes
-
-For the theme, think about the main subject area or domain covered.
-For topics, provide context notes that explain how each term is used in this specific text.
-
-Be thorough - extract all important concepts, terms, definitions, processes, and key ideas.
-
-Text to analyze:
-{original_text}
-
-Return a JSON object with prompt_theme and topics array:"""
-
-    try:
-        response = await call_claude(prompt, system_prompt, max_tokens=16384)
-        
-        # Parse the JSON response
-        cleaned_response = response.strip()
-        
-        if cleaned_response.startswith('```json'):
-            cleaned_response = cleaned_response[7:]
-        if cleaned_response.startswith('```'):
-            cleaned_response = cleaned_response[3:]
-        if cleaned_response.endswith('```'):
-            cleaned_response = cleaned_response[:-3]
-        cleaned_response = cleaned_response.strip()
-        
-        parsed_data = json.loads(cleaned_response)
-        
-        # Validate structure
-        if not isinstance(parsed_data, dict) or "topics" not in parsed_data:
-            raise ValueError("Response doesn't have expected 'topics' array")
-        
-        prompt_theme = parsed_data.get("prompt_theme", "Study topics")
-        
-        # Convert to Topic objects with IDs
-        topics = [
-            Topic(
-                id=f"topic-{idx}",
-                name=topic.get("name", ""),
-                context=topic.get("context", "")
-            )
-            for idx, topic in enumerate(parsed_data["topics"])
-        ]
-        
-        # Generate new cache key (should be same as original since text is same)
-        new_cache_key = generate_cache_key(original_text)
-        
-        # Cache the new results
-        cache_data = {
-            "prompt_theme": prompt_theme,
-            "topics": [t.dict() for t in topics],
-            "original_text": original_text,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        prompt_cache[new_cache_key] = cache_data
-        save_cache_to_disk(new_cache_key, cache_data)
-        
-        logger.info(f"Regenerated and cached with key: {new_cache_key}")
-        
-        return TopicsListResponse(
-            prompt_theme=prompt_theme,
-            topics=topics,
-            cache_key=new_cache_key
-        )
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error regenerating cached prompt: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    # Re-extract using extract_topics logic
+    request = TextToTopicsRequest(text=original_text)
+    return await extract_topics(request)
 
 
 @app.post("/api/extract-topics", response_model=TopicsListResponse)
 async def extract_topics(request: TextToTopicsRequest):
-    """
-    Step 1: Extract topics with brief context from text.
-    Also generates a compressed prompt theme for display.
-    Returns a list of topics with context that can be edited by the user.
-    Results are cached to disk for persistence.
-    """
+    """Extract topics with context and subject categorization from text."""
     logger.info("=" * 80)
     logger.info(f"Received extract-topics request at {datetime.now()}")
     logger.info(f"Input text length: {len(request.text)} characters")
-    logger.info(f"Input text preview: {request.text[:500]}...")
     
-    # Check cache first
     cache_key = generate_cache_key(request.text)
     if cache_key in prompt_cache:
         logger.info(f"Returning cached result for key: {cache_key}")
@@ -431,54 +368,36 @@ async def extract_topics(request: TextToTopicsRequest):
             cache_key=cache_key
         )
     
-    system_prompt = """You are an expert at analyzing text and extracting discrete study topics with brief contextual notes, plus creating a compressed theme summary.
+    system_prompt = """You are an obsessive, hyper-granular study-flashcard generator.
 
-Your task is to:
-1. Create a VERY SHORT (3-7 words) theme/title that describes what this text is about
-2. Identify ALL distinct concepts, terms, or subjects from the text
-3. For each topic, provide a BRIEF context note (2-5 words) that clarifies the meaning
+Hard rules:
+- Extract 100–250+ topics from dense technical text (500–3000 words). Minimum 80 topics.
+- Every acronym, number, port, version, company, product, command, error code, formula, law, theorem, example, or value becomes its own topic.
+- Never bundle lists — each item is separate.
+- Context notes: 2–6 words only.
+- Topic names: 1–6 words, maximally specific (e.g., "SSH port 22", "Python 3.11").
+- For each topic, assign a SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", "Hardware", "Database", "Cloud", "Math", "Physics", etc.
 
-Extract AS MANY topics as are present in the text (aim for thoroughness - 20-50+ topics for longer texts).
-Each topic name should be concise (1-5 words).
-
-Return your response as valid JSON in this exact format:
+Return JSON:
 {
-  "prompt_theme": "short descriptive theme here",
+  "prompt_theme": "short theme (3-7 words)",
   "topics": [
-    {"name": "Topic Name", "context": "brief context note"},
-    {"name": "Another Topic", "context": "another brief note"}
+    {"name": "Topic", "context": "brief note", "subject": "Category"},
+    ...
   ]
-}
+}"""
 
-Examples of good prompt_themes:
-- "Networking fundamentals and protocols"
-- "Machine learning basics"
-- "Photosynthesis process overview"
-- "Ancient Roman history"
+    prompt = f"""Analyze this text and extract ALL discrete topics with subjects:
 
-Return ONLY the JSON object, no other text or formatting."""
-
-    prompt = f"""Analyze the following text and:
-1. Create a short theme/title (3-7 words) that summarizes what this text is about
-2. Extract ALL discrete study topics with brief contextual notes
-
-For the theme, think about the main subject area or domain covered.
-For topics, provide context notes that explain how each term is used in this specific text.
-
-Be thorough - extract all important concepts, terms, definitions, processes, and key ideas.
-
-Text to analyze:
+Text:
 {request.text}
 
-Return a JSON object with prompt_theme and topics array:"""
+Return JSON with prompt_theme, and topics array (each with name, context, and subject):"""
 
     try:
         response = await call_claude(prompt, system_prompt, max_tokens=16384)
         
-        # Parse the JSON response
         cleaned_response = response.strip()
-        logger.info(f"Cleaning response...")
-        
         if cleaned_response.startswith('```json'):
             cleaned_response = cleaned_response[7:]
         if cleaned_response.startswith('```'):
@@ -487,35 +406,28 @@ Return a JSON object with prompt_theme and topics array:"""
             cleaned_response = cleaned_response[:-3]
         cleaned_response = cleaned_response.strip()
         
-        logger.info(f"Cleaned response preview: {cleaned_response[:500]}...")
-        
         parsed_data = json.loads(cleaned_response)
         
-        # Validate structure
         if not isinstance(parsed_data, dict) or "topics" not in parsed_data:
-            logger.error("Response doesn't have expected structure")
             raise ValueError("Response doesn't have expected 'topics' array")
         
         prompt_theme = parsed_data.get("prompt_theme", "Study topics")
         
-        # Convert to Topic objects with IDs
         topics = [
             Topic(
                 id=f"topic-{idx}",
                 name=topic.get("name", ""),
-                context=topic.get("context", "")
+                context=topic.get("context", ""),
+                subject=topic.get("subject", "General")
             )
             for idx, topic in enumerate(parsed_data["topics"])
         ]
         
         logger.info(f"Successfully extracted {len(topics)} topics")
-        logger.info(f"Prompt theme: {prompt_theme}")
-        logger.info(f"Topics: {[t.name for t in topics]}")
         
-        # Cache the results (in memory and on disk)
         cache_data = {
             "prompt_theme": prompt_theme,
-            "topics": [t.dict() for t in topics],  # Convert to dict for JSON serialization
+            "topics": [t.dict() for t in topics],
             "original_text": request.text,
             "timestamp": datetime.now().isoformat()
         }
@@ -523,7 +435,6 @@ Return a JSON object with prompt_theme and topics array:"""
         prompt_cache[cache_key] = cache_data
         save_cache_to_disk(cache_key, cache_data)
         
-        logger.info(f"Cached results with key: {cache_key}")
         logger.info("=" * 80)
         
         return TopicsListResponse(
@@ -534,7 +445,6 @@ Return a JSON object with prompt_theme and topics array:"""
         
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON response: {str(e)}", exc_info=True)
-        logger.error(f"Raw response that failed to parse: {response}")
         raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
     except Exception as e:
         logger.error(f"Error in extract_topics: {str(e)}", exc_info=True)
@@ -543,34 +453,22 @@ Return a JSON object with prompt_theme and topics array:"""
 
 @app.post("/api/generate-flashcards", response_model=FlashcardsResponse)
 async def generate_flashcards(request: GenerateFlashcardsRequest):
-    """
-    Step 2: Generate flashcards with detailed explanations from the selected/edited topics.
-    Takes the list of topics (potentially edited by user) and creates flashcards.
-    """
+    """Generate flashcards from topics and save to storage."""
     logger.info("=" * 80)
-    logger.info(f"Received generate-flashcards request at {datetime.now()}")
-    logger.info(f"Number of topics: {len(request.topics)}")
-    logger.info(f"Topics: {[t.name for t in request.topics]}")
+    logger.info(f"Generating flashcards for {len(request.topics)} topics")
     
     flashcards = []
     
-    for idx, topic in enumerate(request.topics):
-        logger.info(f"Generating explanation for: {topic.name} (context: {topic.context})")
+    for topic in request.topics:
+        # Generate unique ID
+        flashcard_id = str(uuid.uuid4())
         
-        system_prompt = """You are an expert educator who creates clear, concise explanations for study flashcards.
-Your explanations should be:
-- Detailed enough to be educational
-- Succinct enough to fit on a flashcard (2-4 sentences)
-- Clear and easy to understand
-- Factually accurate
-- Focused on the key concepts
-
-Write in a friendly, educational tone."""
-
-        # Include context in the prompt to ensure accurate explanation
-        context_note = f" (in the context of: {topic.context})" if topic.context else ""
-        prompt = f"""Provide a clear, concise explanation of the following topic suitable for a study flashcard.
-Keep your explanation to 2-4 sentences that capture the essential information.
+        logger.info(f"Generating explanation for: {topic.name} (subject: {topic.subject})")
+        
+        system_prompt = """You are an expert educator. Create clear, concise explanations for study flashcards (2-4 sentences)."""
+        
+        context_note = f" (context: {topic.context})" if topic.context else ""
+        prompt = f"""Explain this topic for a flashcard:
 
 Topic: {topic.name}{context_note}
 
@@ -580,54 +478,194 @@ Explanation:"""
             explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
             
             flashcard = Flashcard(
-                id=f"card-{idx}",
+                id=flashcard_id,
                 topic=topic.name,
-                explanation=explanation.strip()
+                subject=topic.subject,
+                explanation=explanation.strip(),
+                chat_history=[]
             )
             flashcards.append(flashcard)
             
-            logger.info(f"Generated explanation length: {len(explanation)} characters")
+            # Save to storage
+            flashcards_storage[flashcard_id] = flashcard.dict()
             
         except Exception as e:
             logger.error(f"Error generating explanation for {topic.name}: {str(e)}")
-            # Continue with other topics even if one fails
             flashcard = Flashcard(
-                id=f"card-{idx}",
+                id=flashcard_id,
                 topic=topic.name,
-                explanation=f"Error generating explanation: {str(e)}"
+                subject=topic.subject,
+                explanation=f"Error: {str(e)}",
+                chat_history=[]
             )
             flashcards.append(flashcard)
+            flashcards_storage[flashcard_id] = flashcard.dict()
     
-    logger.info(f"Successfully generated {len(flashcards)} flashcards")
+    # Save all flashcards to disk
+    save_flashcards_to_disk()
+    
+    logger.info(f"Generated and saved {len(flashcards)} flashcards")
     logger.info("=" * 80)
     
     return FlashcardsResponse(flashcards=flashcards)
 
 
+@app.get("/api/flashcards", response_model=FlashcardsResponse)
+async def get_all_flashcards():
+    """Get all saved flashcards."""
+    flashcards = [Flashcard(**data) for data in flashcards_storage.values()]
+    return FlashcardsResponse(flashcards=flashcards)
+
+
+@app.get("/api/flashcards/{flashcard_id}", response_model=Flashcard)
+async def get_flashcard(flashcard_id: str):
+    """Get a specific flashcard."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    return Flashcard(**flashcards_storage[flashcard_id])
+
+
+@app.put("/api/flashcards/{flashcard_id}")
+async def update_flashcard(flashcard_id: str, request: UpdateFlashcardRequest):
+    """Update flashcard topic or explanation."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    
+    if request.topic is not None:
+        flashcards_storage[flashcard_id]["topic"] = request.topic
+    if request.explanation is not None:
+        flashcards_storage[flashcard_id]["explanation"] = request.explanation
+    
+    save_flashcards_to_disk()
+    
+    return Flashcard(**flashcards_storage[flashcard_id])
+
+
+@app.delete("/api/flashcards/{flashcard_id}")
+async def delete_flashcard(flashcard_id: str):
+    """Delete a flashcard."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    
+    del flashcards_storage[flashcard_id]
+    save_flashcards_to_disk()
+    
+    return {"message": "Flashcard deleted", "id": flashcard_id}
+
+
+@app.post("/api/flashcards/{flashcard_id}/chat", response_model=ChatResponse)
+async def chat_with_flashcard(flashcard_id: str, request: ChatRequest):
+    """Chat with Claude about a flashcard topic."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    
+    flashcard = flashcards_storage[flashcard_id]
+    chat_history = flashcard.get("chat_history", [])
+    
+    # Add user message
+    user_message = ChatMessage(
+        role="user",
+        content=request.message,
+        timestamp=datetime.now().isoformat()
+    )
+    chat_history.append(user_message.dict())
+    
+    # Build context for Claude
+    system_prompt = f"""You are a helpful tutor discussing the topic: {flashcard['topic']}
+
+Current explanation: {flashcard['explanation']}
+
+Answer the user's questions clearly and help them understand the concept better."""
+    
+    # Get Claude's response
+    try:
+        response_text = await call_claude(request.message, system_prompt, max_tokens=2048)
+        
+        assistant_message = ChatMessage(
+            role="assistant",
+            content=response_text,
+            timestamp=datetime.now().isoformat()
+        )
+        chat_history.append(assistant_message.dict())
+        
+        # Save updated chat history
+        flashcards_storage[flashcard_id]["chat_history"] = chat_history
+        save_flashcards_to_disk()
+        
+        return ChatResponse(
+            response=response_text,
+            chat_history=[ChatMessage(**msg) for msg in chat_history]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in chat: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/flashcards/{flashcard_id}/chat")
+async def clear_chat_history(flashcard_id: str):
+    """Clear chat history for a flashcard."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    
+    flashcards_storage[flashcard_id]["chat_history"] = []
+    save_flashcards_to_disk()
+    
+    return {"message": "Chat history cleared", "id": flashcard_id}
+
+
+@app.post("/api/flashcards/{flashcard_id}/distill", response_model=Flashcard)
+async def distill_chat_to_explanation(flashcard_id: str):
+    """Distill chat history into an updated explanation."""
+    if flashcard_id not in flashcards_storage:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    
+    flashcard = flashcards_storage[flashcard_id]
+    chat_history = flashcard.get("chat_history", [])
+    
+    if not chat_history:
+        raise HTTPException(status_code=400, detail="No chat history to distill")
+    
+    # Build prompt to distill chat into new explanation
+    chat_text = "\n\n".join([
+        f"{msg['role'].upper()}: {msg['content']}"
+        for msg in chat_history
+    ])
+    
+    system_prompt = """You are an expert at synthesizing information. 
+Create a comprehensive but concise flashcard explanation (3-5 sentences) that incorporates insights from the conversation."""
+    
+    prompt = f"""Topic: {flashcard['topic']}
+
+Original explanation: {flashcard['explanation']}
+
+Conversation:
+{chat_text}
+
+Create an improved flashcard explanation that incorporates key insights from the conversation:"""
+
+    try:
+        new_explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
+        
+        flashcards_storage[flashcard_id]["explanation"] = new_explanation.strip()
+        save_flashcards_to_disk()
+        
+        return Flashcard(**flashcards_storage[flashcard_id])
+        
+    except Exception as e:
+        logger.error(f"Error distilling chat: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/explain-topic", response_model=ExplanationResponse)
 async def explain_topic(request: TopicExplanationRequest):
-    """
-    Generate or regenerate an explanation for a single topic.
-    Used when user wants to regenerate a flashcard explanation.
-    """
-    logger.info("=" * 80)
-    logger.info(f"Received explain-topic request at {datetime.now()}")
-    logger.info(f"Topic: {request.topic}")
-    logger.info(f"Context: {request.context}")
+    """Generate explanation for a single topic."""
+    logger.info(f"Explaining topic: {request.topic}")
     
-    system_prompt = """You are an expert educator who creates clear, concise explanations for study flashcards.
-Your explanations should be:
-- Detailed enough to be educational
-- Succinct enough to fit on a flashcard (2-4 sentences)
-- Clear and easy to understand
-- Factually accurate
-- Focused on the key concepts
-
-Write in a friendly, educational tone."""
-
-    context_note = f" (in the context of: {request.context})" if request.context else ""
-    prompt = f"""Provide a clear, concise explanation of the following topic suitable for a study flashcard.
-Keep your explanation to 2-4 sentences that capture the essential information.
+    system_prompt = """You are an expert educator. Create clear, concise explanations (2-4 sentences)."""
+    
+    context_note = f" (context: {request.context})" if request.context else ""
+    prompt = f"""Explain this topic for a flashcard:
 
 Topic: {request.topic}{context_note}
 
@@ -635,10 +673,6 @@ Explanation:"""
 
     try:
         explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
-        
-        logger.info(f"Generated explanation length: {len(explanation)} characters")
-        logger.info("=" * 80)
-        
         return ExplanationResponse(
             topic=request.topic,
             explanation=explanation.strip()

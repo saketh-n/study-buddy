@@ -4,6 +4,8 @@ import type {
   ExplanationResponse, 
   CacheCheckResponse, 
   ListCachedPromptsResponse,
+  ChatResponse,
+  Flashcard,
   Topic 
 } from '../types';
 
@@ -178,7 +180,6 @@ export async function checkCache(text: string): Promise<CacheCheckResponse> {
 
 /**
  * Extract topics with brief context from text using Claude AI
- * Returns a list of topics with a prompt theme that can be edited before generating flashcards
  */
 export async function extractTopics(text: string): Promise<TopicsListResponse> {
   try {
@@ -239,6 +240,196 @@ export async function generateFlashcards(topics: Topic[], originalText?: string)
     }
     throw new APIError(
       `Failed to generate flashcards: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Get all saved flashcards
+ */
+export async function getAllFlashcards(): Promise<FlashcardsResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: FlashcardsResponse = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to get flashcards: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Update a flashcard's topic or explanation
+ */
+export async function updateFlashcard(id: string, field: 'topic' | 'explanation', value: string): Promise<Flashcard> {
+  try {
+    const body = field === 'topic' ? { topic: value } : { explanation: value };
+    
+    const response = await fetch(`${API_BASE_URL}/api/flashcards/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: Flashcard = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to update flashcard: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Delete a flashcard
+ */
+export async function deleteFlashcard(id: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to delete flashcard: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Send a chat message about a flashcard
+ */
+export async function sendChatMessage(flashcardId: string, message: string): Promise<ChatResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards/${flashcardId}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ flashcard_id: flashcardId, message }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: ChatResponse = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to send chat message: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Clear chat history for a flashcard
+ */
+export async function clearChatHistory(flashcardId: string): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards/${flashcardId}/chat`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to clear chat history: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Distill chat history into a new explanation
+ */
+export async function distillChatToExplanation(flashcardId: string): Promise<Flashcard> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards/${flashcardId}/distill`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: Flashcard = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to distill chat: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   }
 }

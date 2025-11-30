@@ -5,8 +5,10 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editContext, setEditContext] = useState('');
+  const [editSubject, setEditSubject] = useState('');
   const [newTopicName, setNewTopicName] = useState('');
   const [newTopicContext, setNewTopicContext] = useState('');
+  const [newTopicSubject, setNewTopicSubject] = useState('');
 
   const handleDelete = (id: string) => {
     onUpdateTopics(topics.filter(t => t.id !== id));
@@ -16,6 +18,7 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
     setEditingId(topic.id);
     setEditName(topic.name);
     setEditContext(topic.context);
+    setEditSubject(topic.subject);
   };
 
   const handleSaveEdit = () => {
@@ -23,7 +26,7 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
       onUpdateTopics(
         topics.map(t =>
           t.id === editingId
-            ? { ...t, name: editName, context: editContext }
+            ? { ...t, name: editName, context: editContext, subject: editSubject }
             : t
         )
       );
@@ -35,6 +38,7 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
     setEditingId(null);
     setEditName('');
     setEditContext('');
+    setEditSubject('');
   };
 
   const handleAddTopic = () => {
@@ -43,10 +47,12 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
         id: `topic-${Date.now()}`,
         name: newTopicName.trim(),
         context: newTopicContext.trim(),
+        subject: newTopicSubject.trim() || 'General',
       };
       onUpdateTopics([...topics, newTopic]);
       setNewTopicName('');
       setNewTopicContext('');
+      setNewTopicSubject('');
     }
   };
 
@@ -100,22 +106,31 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
             >
               {editingId === topic.id ? (
                 // Edit Mode
-                <div className="flex-1 flex flex-col sm:flex-row gap-2">
+                <div className="flex-1 flex flex-col gap-2">
                   <input
                     type="text"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    className="flex-1 px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Topic name"
                     autoFocus
                   />
-                  <input
-                    type="text"
-                    value={editContext}
-                    onChange={(e) => setEditContext(e.target.value)}
-                    className="flex-1 px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    placeholder="Context (optional)"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={editContext}
+                      onChange={(e) => setEditContext(e.target.value)}
+                      className="flex-1 px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      placeholder="Context"
+                    />
+                    <input
+                      type="text"
+                      value={editSubject}
+                      onChange={(e) => setEditSubject(e.target.value)}
+                      className="flex-1 px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      placeholder="Subject"
+                    />
+                  </div>
                   <div className="flex gap-2">
                     <button
                       onClick={handleSaveEdit}
@@ -135,7 +150,12 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
                 // View Mode
                 <>
                   <div className="flex-1">
-                    <div className="font-semibold text-gray-800">{topic.name}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-semibold text-gray-800">{topic.name}</div>
+                      <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-800 rounded">
+                        {topic.subject}
+                      </span>
+                    </div>
                     {topic.context && (
                       <div className="text-sm text-gray-600 italic">Context: {topic.context}</div>
                     )}
@@ -169,34 +189,46 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
         {/* Add New Topic */}
         <div className="border-t pt-4">
           <h3 className="font-semibold text-gray-700 mb-2">Add New Topic</h3>
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col gap-2">
             <input
               type="text"
               value={newTopicName}
               onChange={(e) => setNewTopicName(e.target.value)}
               placeholder="Topic name"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleAddTopic();
               }}
             />
-            <input
-              type="text"
-              value={newTopicContext}
-              onChange={(e) => setNewTopicContext(e.target.value)}
-              placeholder="Context (optional)"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAddTopic();
-              }}
-            />
-            <button
-              onClick={handleAddTopic}
-              disabled={!newTopicName.trim()}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Add
-            </button>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newTopicContext}
+                onChange={(e) => setNewTopicContext(e.target.value)}
+                placeholder="Context (optional)"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddTopic();
+                }}
+              />
+              <input
+                type="text"
+                value={newTopicSubject}
+                onChange={(e) => setNewTopicSubject(e.target.value)}
+                placeholder="Subject (optional)"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddTopic();
+                }}
+              />
+              <button
+                onClick={handleAddTopic}
+                disabled={!newTopicName.trim()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       </div>

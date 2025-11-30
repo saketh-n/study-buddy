@@ -1,14 +1,23 @@
-// Topic with context for editing
+// Topic with context and subject for editing
 export interface Topic {
   id: string;
   name: string;
-  context: string; // Brief context note (e.g., "networking device", "programming language")
+  context: string;
+  subject: string; // NEW: Category like "Networking", "Storage", "Security"
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
 }
 
 export interface Flashcard {
   id: string;
   topic: string;
+  subject: string; // NEW: For categorization
   explanation: string;
+  chat_history: ChatMessage[];
   isGeneratingExplanation?: boolean;
 }
 
@@ -42,11 +51,21 @@ export interface TopicsListProps {
 
 export interface FlashcardProps {
   flashcard: Flashcard;
+  onUpdate: (id: string, field: 'topic' | 'explanation', value: string) => void;
+  onDelete: (id: string) => void;
+  onSendChatMessage: (id: string, message: string) => void;
+  onClearChat: (id: string) => void;
+  onDistillChat: (id: string) => void;
   onGenerateExplanation: (id: string, topic: string) => void;
 }
 
 export interface FlashcardListProps {
   flashcards: Flashcard[];
+  onUpdate: (id: string, field: 'topic' | 'explanation', value: string) => void;
+  onDelete: (id: string) => void;
+  onSendChatMessage: (id: string, message: string) => void;
+  onClearChat: (id: string) => void;
+  onDistillChat: (id: string) => void;
   onGenerateExplanation: (id: string, topic: string) => void;
 }
 
@@ -75,4 +94,9 @@ export interface CacheCheckResponse {
 
 export interface ListCachedPromptsResponse {
   prompts: CachedPrompt[];
+}
+
+export interface ChatResponse {
+  response: string;
+  chat_history: ChatMessage[];
 }

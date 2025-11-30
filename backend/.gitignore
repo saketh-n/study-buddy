@@ -20,6 +20,9 @@ api.log
 # Cache
 prompt_cache/
 
+# Flashcard storage
+flashcards_storage.json
+
 # IDE
 .vscode/
 .idea/
