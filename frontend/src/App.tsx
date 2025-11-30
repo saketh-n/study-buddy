@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ConceptInput, CachedPrompts, TopicsList, FlashcardList } from './components';
+import { ConceptInput, CachedPrompts, TopicsList, FlashcardList, CreateFlashcard } from './components';
 import type { Flashcard, Topic, CachedPrompt } from './types';
 import { 
   listCachedPrompts, 
@@ -10,6 +10,7 @@ import {
   extractTopics, 
   generateFlashcards,
   getAllFlashcards,
+  createFlashcard,
   updateFlashcard,
   deleteFlashcard,
   sendChatMessage,
@@ -122,7 +123,7 @@ function App() {
     }
   };
 
-  const handleGenerateTopics = async (text: string) => {
+  const handleGenerateTopics = async (text: string, filterNovelOnly: boolean) => {
     setIsExtractingTopics(true);
     setError(null);
     setCacheInfo(null);
@@ -132,19 +133,60 @@ function App() {
       const cacheResult = await checkCache(text);
       
       if (cacheResult.cached && cacheResult.topics && cacheResult.prompt_theme) {
-        setTopics(cacheResult.topics);
+        let resultTopics = cacheResult.topics;
+        
+        // Filter out existing topics if requested
+        if (filterNovelOnly && flashcards.length > 0) {
+          const existingTopicNames = new Set(
+            flashcards.map(fc => fc.topic.toLowerCase().trim())
+          );
+          const beforeCount = resultTopics.length;
+          resultTopics = resultTopics.filter(
+            topic => !existingTopicNames.has(topic.name.toLowerCase().trim())
+          );
+          const filteredCount = beforeCount - resultTopics.length;
+          
+          if (filteredCount > 0) {
+            setCacheInfo(`✓ Loaded "${cacheResult.prompt_theme}" from cache (filtered out ${filteredCount} existing topic${filteredCount !== 1 ? 's' : ''})`);
+          } else {
+            setCacheInfo(`✓ Loaded "${cacheResult.prompt_theme}" from cache (all topics are novel)`);
+          }
+        } else {
+          setCacheInfo(`✓ Loaded "${cacheResult.prompt_theme}" from cache (saved API call)`);
+        }
+        
+        setTopics(resultTopics);
         setPromptTheme(cacheResult.prompt_theme);
-        setCacheInfo(`✓ Loaded "${cacheResult.prompt_theme}" from cache (saved API call)`);
         setIsExtractingTopics(false);
         await loadCachedPrompts();
         return;
       }
 
       const response = await extractTopics(text);
+      let resultTopics = response.topics;
       
-      setTopics(response.topics);
+      // Filter out existing topics if requested
+      if (filterNovelOnly && flashcards.length > 0) {
+        const existingTopicNames = new Set(
+          flashcards.map(fc => fc.topic.toLowerCase().trim())
+        );
+        const beforeCount = resultTopics.length;
+        resultTopics = resultTopics.filter(
+          topic => !existingTopicNames.has(topic.name.toLowerCase().trim())
+        );
+        const filteredCount = beforeCount - resultTopics.length;
+        
+        if (filteredCount > 0) {
+          setCacheInfo(`✓ Extracted ${resultTopics.length} novel topic${resultTopics.length !== 1 ? 's' : ''} for "${response.prompt_theme}" (filtered out ${filteredCount} existing)`);
+        } else {
+          setCacheInfo(`✓ Extracted ${resultTopics.length} topic${resultTopics.length !== 1 ? 's' : ''} for "${response.prompt_theme}" (all novel)`);
+        }
+      } else {
+        setCacheInfo(`✓ Extracted topics for "${response.prompt_theme}" and cached`);
+      }
+      
+      setTopics(resultTopics);
       setPromptTheme(response.prompt_theme);
-      setCacheInfo(`✓ Extracted topics for "${response.prompt_theme}" and cached`);
       
       await loadCachedPrompts();
     } catch (err) {
@@ -317,6 +359,35 @@ function App() {
     setCacheInfo(null);
   };
 
+  const handleCreateFlashcard = async (
+    topic: string,
+    subject: string,
+    explanation: string,
+    generateExplanation: boolean,
+    context: string
+  ) => {
+    try {
+      const newFlashcard = await createFlashcard(
+        topic,
+        subject,
+        generateExplanation ? undefined : explanation,
+        generateExplanation,
+        context
+      );
+      
+      setFlashcards(prev => [...prev, newFlashcard]);
+      setCacheInfo(`✓ Created flashcard: ${topic}`);
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to create flashcard. Please try again.');
+      }
+      console.error('Error creating flashcard:', err);
+      throw err;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <div className="container mx-auto px-4 py-8">
@@ -362,7 +433,7 @@ function App() {
               </svg>
               <p className="text-green-700 text-sm font-medium">{cacheInfo}</p>
             </div>
-          </div>
+      </div>
         )}
 
         {/* Cached Prompts */}
@@ -400,9 +471,12 @@ function App() {
               className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Clear Topics & Start Over
-            </button>
+        </button>
           </div>
         )}
+
+        {/* Create New Flashcard */}
+        <CreateFlashcard onCreateFlashcard={handleCreateFlashcard} />
 
         {/* Step 3: Flashcard List with Subjects */}
         <FlashcardList 

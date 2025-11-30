@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { TopicsListProps, Topic } from '../types';
 
 export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlashcards, isGenerating }: TopicsListProps) => {
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editContext, setEditContext] = useState('');
@@ -62,43 +63,70 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
 
   return (
     <div className="w-full max-w-4xl mx-auto mb-8">
-      <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-gray-200">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-800">
-              Topics Found ({topics.length})
-            </h2>
-            {promptTheme && (
-              <p className="text-sm text-gray-600 italic mt-1">
-                Theme: {promptTheme}
-              </p>
-            )}
+      <div className="bg-white rounded-xl shadow-lg border-2 border-gray-200">
+        {/* Collapsible Header */}
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="w-full flex items-center justify-between p-6 hover:bg-gray-50 transition rounded-t-xl"
+        >
+          <div className="flex items-center gap-3">
+            <svg
+              className={`w-6 h-6 text-gray-700 transition-transform ${
+                isCollapsed ? '' : 'rotate-90'
+              }`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <div className="text-left">
+              <h2 className="text-2xl font-bold text-gray-800">
+                Topics Found ({topics.length})
+              </h2>
+              {promptTheme && (
+                <p className="text-sm text-gray-600 italic mt-1">
+                  Theme: {promptTheme}
+                </p>
+              )}
+            </div>
           </div>
-          <button
-            onClick={onGenerateFlashcards}
-            disabled={isGenerating || topics.length === 0}
-            className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {isGenerating ? (
-              <>
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span>Generating Flashcards...</span>
-              </>
-            ) : (
-              'Generate Flashcards from Topics'
-            )}
-          </button>
-        </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-600">
+              {isCollapsed ? 'Click to expand' : 'Click to collapse'}
+            </span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onGenerateFlashcards();
+              }}
+              disabled={isGenerating || topics.length === 0}
+              className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {isGenerating ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Generating...</span>
+                </>
+              ) : (
+                'Generate Flashcards'
+              )}
+            </button>
+          </div>
+        </button>
 
-        <p className="text-gray-600 text-sm mb-4">
-          Review and edit topics below. Delete unwanted items, edit names/context, or add new topics.
-        </p>
+        {/* Collapsible Content */}
+        {!isCollapsed && (
+          <div className="p-6 pt-0">
+            <p className="text-gray-600 text-sm mb-4">
+              Review and edit topics below. Delete unwanted items, edit names/context, or add new topics.
+            </p>
 
-        {/* Topics List */}
-        <div className="space-y-2 mb-6 max-h-96 overflow-y-auto">
+            {/* Topics List */}
+            <div className="space-y-2 mb-6 max-h-96 overflow-y-auto">
           {topics.map((topic) => (
             <div
               key={topic.id}
@@ -184,10 +212,10 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
               )}
             </div>
           ))}
-        </div>
+            </div>
 
-        {/* Add New Topic */}
-        <div className="border-t pt-4">
+            {/* Add New Topic */}
+            <div className="border-t pt-4">
           <h3 className="font-semibold text-gray-700 mb-2">Add New Topic</h3>
           <div className="flex flex-col gap-2">
             <input
@@ -230,7 +258,9 @@ export const TopicsList = ({ topics, promptTheme, onUpdateTopics, onGenerateFlas
               </button>
             </div>
           </div>
-        </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

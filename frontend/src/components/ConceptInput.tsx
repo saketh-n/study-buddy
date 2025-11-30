@@ -3,11 +3,12 @@ import type { ConceptInputProps } from '../types';
 
 export const ConceptInput = ({ onGenerateTopics, isLoading }: ConceptInputProps) => {
   const [inputText, setInputText] = useState('');
+  const [filterNovelOnly, setFilterNovelOnly] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (inputText.trim() && !isLoading) {
-      onGenerateTopics(inputText.trim());
+      onGenerateTopics(inputText.trim(), filterNovelOnly);
     }
   };
 
@@ -31,6 +32,27 @@ export const ConceptInput = ({ onGenerateTopics, isLoading }: ConceptInputProps)
             disabled={isLoading}
           />
         </div>
+
+        {/* Filter Novel Topics Only Checkbox */}
+        <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+          <input
+            type="checkbox"
+            id="filterNovelOnly"
+            checked={filterNovelOnly}
+            onChange={(e) => setFilterNovelOnly(e.target.checked)}
+            disabled={isLoading}
+            className="w-5 h-5 text-blue-600 mt-0.5 cursor-pointer disabled:cursor-not-allowed"
+          />
+          <label htmlFor="filterNovelOnly" className="flex-1 cursor-pointer">
+            <div className="text-sm font-semibold text-gray-800">
+              Filter out existing topics (novel topics only)
+            </div>
+            <div className="text-xs text-gray-600 mt-1">
+              Extract only new topics that don't overlap with your existing flashcards. Perfect for pasting large notes sequentially without duplicates.
+            </div>
+          </label>
+        </div>
+
         <button
           type="submit"
           disabled={!inputText.trim() || isLoading}

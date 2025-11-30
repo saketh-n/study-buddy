@@ -60,10 +60,11 @@ export const CachedPrompts = ({
               key={prompt.cache_key}
               className="group relative"
             >
-              <button
-                onClick={() => onSelectPrompt(prompt.cache_key)}
-                disabled={isLoading}
-                className="w-full text-left p-3 bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed border border-gray-200 hover:border-blue-300"
+              <div
+                onClick={() => !isLoading && onSelectPrompt(prompt.cache_key)}
+                className={`w-full text-left p-3 bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 rounded-lg transition duration-200 border border-gray-200 hover:border-blue-300 ${
+                  isLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                }`}
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0 mr-2">
@@ -114,7 +115,7 @@ export const CachedPrompts = ({
                     />
                   </svg>
                 </div>
-              </button>
+              </div>
             </div>
           ))}
         </div>

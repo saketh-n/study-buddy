@@ -245,6 +245,51 @@ export async function generateFlashcards(topics: Topic[], originalText?: string)
 }
 
 /**
+ * Create a new flashcard (manually or with AI generation)
+ */
+export async function createFlashcard(
+  topic: string,
+  subject: string,
+  explanation?: string,
+  generateExplanation: boolean = false,
+  context?: string
+): Promise<Flashcard> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/flashcards`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        topic,
+        subject,
+        explanation,
+        generate_explanation: generateExplanation,
+        context,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: Flashcard = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to create flashcard: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
  * Get all saved flashcards
  */
 export async function getAllFlashcards(): Promise<FlashcardsResponse> {

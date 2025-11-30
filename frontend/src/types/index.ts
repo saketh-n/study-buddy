@@ -22,7 +22,7 @@ export interface Flashcard {
 }
 
 export interface ConceptInputProps {
-  onGenerateTopics: (text: string) => void;
+  onGenerateTopics: (text: string, filterNovelOnly: boolean) => void;
   isLoading?: boolean;
 }
 
@@ -99,4 +99,16 @@ export interface ListCachedPromptsResponse {
 export interface ChatResponse {
   response: string;
   chat_history: ChatMessage[];
+}
+
+export interface CreateFlashcardRequest {
+  topic: string;
+  subject: string;
+  explanation?: string;
+  generate_explanation: boolean;
+  context?: string;
+}
+
+export interface DistillResponse {
+  flashcard: Flashcard;
 }

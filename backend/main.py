@@ -172,6 +172,14 @@ class UpdateFlashcardRequest(BaseModel):
     explanation: Optional[str] = None
 
 
+class CreateFlashcardRequest(BaseModel):
+    topic: str
+    subject: str
+    explanation: Optional[str] = None
+    generate_explanation: bool = False  # If True, use AI to generate explanation
+    context: Optional[str] = None  # Context for AI generation
+
+
 class ChatRequest(BaseModel):
     flashcard_id: str
     message: str
@@ -508,6 +516,52 @@ Explanation:"""
     logger.info("=" * 80)
     
     return FlashcardsResponse(flashcards=flashcards)
+
+
+@app.post("/api/flashcards", response_model=Flashcard)
+async def create_flashcard(request: CreateFlashcardRequest):
+    """Create a new flashcard manually or with AI-generated explanation."""
+    logger.info("=" * 80)
+    logger.info(f"Creating flashcard for topic: {request.topic}")
+    
+    flashcard_id = str(uuid.uuid4())
+    explanation = request.explanation or ""
+    
+    # If generate_explanation is True, use AI to generate the explanation
+    if request.generate_explanation:
+        logger.info(f"Generating AI explanation for: {request.topic}")
+        system_prompt = """You are an expert educator. Create clear, concise explanations for study flashcards (2-4 sentences)."""
+        
+        context_note = f" (context: {request.context})" if request.context else ""
+        prompt = f"""Explain this topic for a flashcard:
+
+Topic: {request.topic}{context_note}
+
+Explanation:"""
+        
+        try:
+            explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
+            explanation = explanation.strip()
+        except Exception as e:
+            logger.error(f"Error generating explanation: {str(e)}")
+            explanation = f"Error generating explanation: {str(e)}"
+    
+    flashcard = Flashcard(
+        id=flashcard_id,
+        topic=request.topic,
+        subject=request.subject,
+        explanation=explanation,
+        chat_history=[]
+    )
+    
+    # Save to storage
+    flashcards_storage[flashcard_id] = flashcard.dict()
+    save_flashcards_to_disk()
+    
+    logger.info(f"Created flashcard: {flashcard_id}")
+    logger.info("=" * 80)
+    
+    return flashcard
 
 
 @app.get("/api/flashcards", response_model=FlashcardsResponse)
