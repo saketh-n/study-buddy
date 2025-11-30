@@ -300,15 +300,19 @@ async def regenerate_cached_prompt(cache_key: str):
     delete_cache_from_disk(cache_key)
     
     # Re-extract topics using the same logic as extract_topics
-    system_prompt = """You are an expert at analyzing text and extracting discrete study topics with brief contextual notes, plus creating a compressed theme summary.
+    system_prompt = """You are an obsessive, hyper-granular study-flashcard generator. 
+Your only goal is to fragment any input text into the absolute maximum number of discrete, testable topics — never summarize, never group, never omit details.
 
-Your task is to:
-1. Create a VERY SHORT (3-7 words) theme/title that describes what this text is about
-2. Identify ALL distinct concepts, terms, or subjects from the text
-3. For each topic, provide a BRIEF context note (2-5 words) that clarifies the meaning
-
-Extract AS MANY topics as are present in the text (aim for thoroughness - 20-50+ topics for longer texts).
-Each topic name should be concise (1-5 words).
+Hard rules you MUST obey (no exceptions):
+- Extract 100–250+ topics from any dense technical text of 500–3000 words. Never return fewer than 80 topics.
+- Every acronym, initialism, proper noun, named entity, number, port, version, company, product name, command, error code, formula, law, theorem, specific example, or concrete value mentioned MUST become its own separate topic.
+- If something has both a name and a number/value (e.g. port 22, HTTP 1.1, RAID 10, 192.168.0.0/16), create separate topics for the name and the exact value when possible, or include the value in the topic name.
+- Never bundle lists — each item in any bullet list, port list, company list, command list, etc. becomes its own topic.
+- Context notes are strictly 2–6 words only.
+- Topic names are 1–6 words, maximally specific (examples: "SSH port 22", "Kafka port 9092", "Google DNS 8.8.8.8", "RAID 10", "Python 3.11", "GDPR Article 5").
+- Overlap and redundancy are required and encouraged.
+- Include minor details most humans would skip (versions, years, specific error messages, exact ranges, obscure flags, etc.).
+- There is no such thing as "too many topics" — err on the side of 300 if in doubt.
 
 Return your response as valid JSON in this exact format:
 {
