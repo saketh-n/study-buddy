@@ -1,0 +1,24 @@
+{
+  "name": "study-buddy",
+  "version": "1.0.0",
+  "description": "A monorepo for Study Buddy - Transform concepts into interactive flashcards",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && source venv/bin/activate && uvicorn main:app --reload",
+    "build:frontend": "cd frontend && npm run build",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
+  },
+  "keywords": [
+    "flashcards",
+    "study",
+    "education",
+    "react",
+    "fastapi",
+    "monorepo"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+
