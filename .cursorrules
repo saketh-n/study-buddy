@@ -1,0 +1,17 @@
+# Cursor Rules for This Project
+
+## Import Rules
+- ALWAYS use `import type { ... }` when importing types from any file (e.g., `./types.ts` or `@/types/*`).
+- Never use value imports (`import { Foo }`) for pure types—prefer inline style: `import type { Foo } from './types'`.
+- If a file exports only types, enforce `import type` exclusively. Fix any violations on save or edit.
+
+## File Generation Rules
+- NEVER generate or suggest creating `.md` files for explanations, docs, refactors, or any inline edits.
+- Do not auto-save chats or outputs as Markdown—keep everything in code files or console.
+- Delete any existinggenerated Markdown files after saving the code file.
+- If documentation is needed, suggest adding JSDoc/TS Doc comments inline instead of separate files.
+
+## General
+- Prioritize TypeScript best practices: strict mode, no-any, explicit types.
+- Be concise in responses; explain only when asked.
+- Respect ESLint/Prettier configs—run fixes automatically where possible.

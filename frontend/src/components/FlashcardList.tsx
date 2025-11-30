@@ -1,12 +1,12 @@
 import type { FlashcardListProps } from '../types';
 import { Flashcard } from './Flashcard';
 
-export const FlashcardList = ({ flashcards }: FlashcardListProps) => {
+export const FlashcardList = ({ flashcards, onGenerateExplanation }: FlashcardListProps) => {
   if (flashcards.length === 0) {
     return (
       <div className="text-center py-12">
         <p className="text-gray-500 text-lg">
-          No flashcards yet. Enter some concepts above to get started!
+          No flashcards yet. Enter some text above to get started!
         </p>
       </div>
     );
@@ -21,10 +21,13 @@ export const FlashcardList = ({ flashcards }: FlashcardListProps) => {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {flashcards.map((flashcard) => (
-          <Flashcard key={flashcard.id} flashcard={flashcard} />
+          <Flashcard 
+            key={flashcard.id} 
+            flashcard={flashcard}
+            onGenerateExplanation={onGenerateExplanation}
+          />
         ))}
       </div>
     </div>
   );
 };
-

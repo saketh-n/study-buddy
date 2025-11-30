@@ -1,22 +1,13 @@
 import { useState } from 'react';
 import type { ConceptInputProps } from '../types';
 
-export const ConceptInput = ({ onConceptsSubmit }: ConceptInputProps) => {
+export const ConceptInput = ({ onConceptsSubmit, isLoading }: ConceptInputProps) => {
   const [inputText, setInputText] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputText.trim()) {
-      // Split concepts by commas, semicolons, or newlines
-      const concepts = inputText
-        .split(/[,;\n]+/)
-        .map(concept => concept.trim())
-        .filter(concept => concept.length > 0);
-      
-      if (concepts.length > 0) {
-        onConceptsSubmit(concepts);
-        setInputText('');
-      }
+    if (inputText.trim() && !isLoading) {
+      onConceptsSubmit(inputText.trim());
     }
   };
 
@@ -28,25 +19,36 @@ export const ConceptInput = ({ onConceptsSubmit }: ConceptInputProps) => {
             htmlFor="concepts" 
             className="block text-lg font-semibold text-gray-700 mb-2"
           >
-            Enter Concepts to Study
+            Enter Text to Study
           </label>
           <textarea
             id="concepts"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Enter concepts separated by commas, semicolons, or new lines...&#10;Example: Photosynthesis, Newton's Laws, Pythagorean Theorem"
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y min-h-[120px] text-gray-800"
-            rows={5}
+            placeholder="Paste any text, article, or notes here. AI will extract key topics to study...&#10;&#10;Example: Photosynthesis is the process by which plants convert light energy into chemical energy. Newton's Laws describe the relationship between motion and forces..."
+            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y min-h-[160px] text-gray-800 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            rows={6}
+            disabled={isLoading}
           />
         </div>
         <button
           type="submit"
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 ease-in-out transform hover:scale-[1.02] active:scale-[0.98]"
+          disabled={!inputText.trim() || isLoading}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 ease-in-out transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2"
         >
-          Generate Flashcards
+          {isLoading ? (
+            <>
+              <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Generating Flashcards...</span>
+            </>
+          ) : (
+            'Generate Flashcards'
+          )}
         </button>
       </form>
     </div>
   );
 };
-
