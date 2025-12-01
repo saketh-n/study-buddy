@@ -179,16 +179,82 @@ export async function checkCache(text: string): Promise<CacheCheckResponse> {
 }
 
 /**
+ * Extract topics from an uploaded image using Claude Vision API
+ */
+export async function extractTopicsFromImage(file: File): Promise<TopicsListResponse> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${API_BASE_URL}/api/extract-topics-from-image`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: TopicsListResponse = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to extract topics from image: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Extract topics with intelligent question-based approach
+ */
+export async function extractTopicsIntelligent(text: string, conciseMode: boolean = false): Promise<TopicsListResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/extract-topics-intelligent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text, concise_mode: conciseMode }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data: TopicsListResponse = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to extract topics intelligently: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
  * Extract topics with brief context from text using Claude AI
  */
-export async function extractTopics(text: string): Promise<TopicsListResponse> {
+export async function extractTopics(text: string, conciseMode: boolean = false): Promise<TopicsListResponse> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/extract-topics`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, concise_mode: conciseMode }),
     });
 
     if (!response.ok) {
@@ -285,6 +351,71 @@ export async function createFlashcard(
     }
     throw new APIError(
       `Failed to create flashcard: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Organize flashcards into hierarchical structure (subjects → sections → subsections)
+ */
+export async function organizeFlashcards(flashcardIds: string[]): Promise<{ message: string; flashcards: Flashcard[] }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/organize-flashcards`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ flashcard_ids: flashcardIds }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to organize flashcards: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Generate podcast transcript for a subject
+ */
+export async function generatePodcast(subject: string): Promise<{ subject: string; transcript: string; generated_at: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/generate-podcast/${encodeURIComponent(subject)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to generate podcast: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   }
 }

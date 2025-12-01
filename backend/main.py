@@ -3,9 +3,10 @@ import json
 import logging
 import hashlib
 import uuid
+import base64
 from pathlib import Path
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Optional
@@ -129,6 +130,7 @@ load_flashcards_from_disk()
 # Request/Response Models
 class TextToTopicsRequest(BaseModel):
     text: str
+    concise_mode: bool = False
 
 
 class Topic(BaseModel):
@@ -156,6 +158,14 @@ class Flashcard(BaseModel):
     subject: str  # NEW: for categorization
     explanation: str
     chat_history: List[ChatMessage] = []
+    section: Optional[str] = None  # Section within subject
+    subsection: Optional[str] = None  # Subsection within section
+
+
+class SubjectPodcast(BaseModel):
+    subject: str
+    transcript: str
+    generated_at: str
 
 
 class GenerateFlashcardsRequest(BaseModel):
@@ -178,6 +188,10 @@ class CreateFlashcardRequest(BaseModel):
     explanation: Optional[str] = None
     generate_explanation: bool = False  # If True, use AI to generate explanation
     context: Optional[str] = None  # Context for AI generation
+
+
+class OrganizeFlashcardsRequest(BaseModel):
+    flashcard_ids: List[str]  # IDs of flashcards to organize into hierarchy
 
 
 class ChatRequest(BaseModel):
@@ -376,7 +390,27 @@ async def extract_topics(request: TextToTopicsRequest):
             cache_key=cache_key
         )
     
-    system_prompt = """You are an obsessive, hyper-granular study-flashcard generator.
+    if request.concise_mode:
+        system_prompt = """You are a focused, concise study-flashcard generator.
+
+Hard rules:
+- Extract 20–50 core topics from text. Focus on major concepts, not granular details.
+- Prioritize fundamental concepts, key definitions, and main ideas.
+- Group related items (e.g., "Common network ports" instead of each port separately).
+- Context notes: 2–6 words only.
+- Topic names: 1–6 words, clear and specific.
+- For each topic, assign a SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", etc.
+
+Return JSON:
+{
+  "prompt_theme": "short theme (3-7 words)",
+  "topics": [
+    {"name": "Topic", "context": "brief note", "subject": "Category"},
+    ...
+  ]
+}"""
+    else:
+        system_prompt = """You are an obsessive, hyper-granular study-flashcard generator.
 
 Hard rules:
 - Extract 100–250+ topics from dense technical text (500–3000 words). Minimum 80 topics.
@@ -456,6 +490,307 @@ Return JSON with prompt_theme, and topics array (each with name, context, and su
         raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
     except Exception as e:
         logger.error(f"Error in extract_topics: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/extract-topics-from-image", response_model=TopicsListResponse)
+async def extract_topics_from_image(file: UploadFile = File(...)):
+    """Extract topics from an uploaded image using Claude Vision API."""
+    logger.info("=" * 80)
+    logger.info(f"Received image upload: {file.filename}")
+    
+    # Read and validate image
+    try:
+        image_data = await file.read()
+        
+        # Validate file size (max 5MB)
+        if len(image_data) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Image file too large (max 5MB)")
+        
+        # Detect media type
+        content_type = file.content_type or "image/jpeg"
+        if content_type not in ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]:
+            raise HTTPException(status_code=400, detail="Unsupported image format. Use JPEG, PNG, GIF, or WebP.")
+        
+        # Convert to base64
+        image_base64 = base64.standard_b64encode(image_data).decode("utf-8")
+        
+        logger.info(f"Image size: {len(image_data)} bytes, type: {content_type}")
+        
+    except Exception as e:
+        logger.error(f"Error reading image: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to read image: {str(e)}")
+    
+    # Use Claude Vision API
+    system_prompt = """You are an obsessive, hyper-granular study-flashcard generator analyzing images.
+
+Extract ALL topics, questions, concepts, formulas, diagrams, or text visible in the image:
+- Extract 50–200+ topics from dense content.
+- Every term, question, formula, diagram label, example, or concept becomes its own topic.
+- Context notes: 2–6 words describing where/how it appears.
+- Topic names: 1–6 words, maximally specific.
+- For each topic, assign a SUBJECT category (1-2 words) like: "Networking", "Math", "Physics", "Chemistry", "Biology", "Programming", etc.
+
+Return JSON:
+{
+  "prompt_theme": "short theme (3-7 words)",
+  "topics": [
+    {"name": "Topic", "context": "from diagram/text", "subject": "Category"},
+    ...
+  ]
+}"""
+
+    try:
+        # Call Claude Vision API
+        logger.info("Calling Claude Vision API...")
+        message = anthropic_client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=16384,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": content_type,
+                                "data": image_base64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "Analyze this image and extract ALL topics, questions, and concepts with their subjects. Return JSON with prompt_theme and topics array:"
+                        }
+                    ],
+                }
+            ],
+        )
+        
+        response_text = message.content[0].text
+        logger.info(f"Vision API response length: {len(response_text)} characters")
+        logger.info(f"Stop reason: {message.stop_reason}, Tokens used: {message.usage}")
+        
+        # Parse response
+        cleaned_response = response_text.strip()
+        if cleaned_response.startswith('```json'):
+            cleaned_response = cleaned_response[7:]
+        if cleaned_response.startswith('```'):
+            cleaned_response = cleaned_response[3:]
+        if cleaned_response.endswith('```'):
+            cleaned_response = cleaned_response[:-3]
+        cleaned_response = cleaned_response.strip()
+        
+        parsed_data = json.loads(cleaned_response)
+        
+        if not isinstance(parsed_data, dict) or "topics" not in parsed_data:
+            raise ValueError("Response doesn't have expected 'topics' array")
+        
+        prompt_theme = parsed_data.get("prompt_theme", "Image analysis")
+        
+        topics = [
+            Topic(
+                id=f"topic-{idx}",
+                name=topic.get("name", ""),
+                context=topic.get("context", ""),
+                subject=topic.get("subject", "General")
+            )
+            for idx, topic in enumerate(parsed_data["topics"])
+        ]
+        
+        logger.info(f"Successfully extracted {len(topics)} topics from image")
+        
+        # Generate cache key based on image hash
+        image_hash = hashlib.md5(image_data).hexdigest()
+        cache_key = f"img_{image_hash}"
+        
+        # Cache the result
+        cache_data = {
+            "prompt_theme": prompt_theme,
+            "topics": [t.dict() for t in topics],
+            "original_text": f"[Image: {file.filename}]",
+            "timestamp": datetime.now().isoformat(),
+            "source": "image"
+        }
+        
+        prompt_cache[cache_key] = cache_data
+        save_cache_to_disk(cache_key, cache_data)
+        
+        logger.info("=" * 80)
+        
+        return TopicsListResponse(
+            prompt_theme=prompt_theme,
+            topics=topics,
+            cache_key=cache_key
+        )
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in extract_topics_from_image: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/extract-topics-intelligent", response_model=TopicsListResponse)
+async def extract_topics_intelligent(request: TextToTopicsRequest):
+    """
+    Intelligent two-step topic extraction:
+    1. First extract all questions from the text
+    2. Then use those questions to generate specific, granular topics
+    """
+    logger.info("=" * 80)
+    logger.info(f"Received intelligent extract-topics request at {datetime.now()}")
+    logger.info(f"Input text length: {len(request.text)} characters")
+    
+    cache_key = generate_cache_key(f"intelligent_{request.text}")
+    if cache_key in prompt_cache:
+        logger.info(f"Returning cached result for key: {cache_key}")
+        cached_data = prompt_cache[cache_key]
+        return TopicsListResponse(
+            prompt_theme=cached_data.get("prompt_theme", "Cached topics"),
+            topics=cached_data["topics"],
+            cache_key=cache_key
+        )
+    
+    # Step 1: Extract questions
+    logger.info("Step 1: Extracting questions from text...")
+    
+    question_system_prompt = """You are a question extraction expert. Find ALL questions (explicit or implicit) in the text.
+
+Extract:
+- Explicit questions (marked with "?")
+- Implicit questions (e.g., "important things to know", "key concepts", "what you should understand")
+- Study prompts (e.g., "list all X", "understand Y", "know the Z")
+
+Return JSON:
+{
+  "questions": [
+    {"question": "What are the important port numbers?", "context": "networking"},
+    {"question": "Which Unix commands are essential?", "context": "system admin"},
+    ...
+  ]
+}"""
+
+    question_prompt = f"""Extract ALL questions (explicit and implicit) from this text:
+
+Text:
+{request.text}
+
+Return JSON with questions array:"""
+
+    try:
+        # Extract questions
+        questions_response = await call_claude(question_prompt, question_system_prompt, max_tokens=8192)
+        
+        cleaned = questions_response.strip()
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]
+        if cleaned.startswith('```'):
+            cleaned = cleaned[3:]
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        questions_data = json.loads(cleaned)
+        questions = questions_data.get("questions", [])
+        
+        logger.info(f"Extracted {len(questions)} questions")
+        
+        # Step 2: Generate granular topics from questions
+        logger.info("Step 2: Generating granular topics from questions...")
+        
+        topics_system_prompt = """You are an obsessive, hyper-granular study-flashcard generator.
+
+For each question provided, generate 5–20+ specific, discrete topics that answer it.
+
+Hard rules:
+- Break down questions into atomic topics (e.g., "MySQL port 3306", "SSH port 22", not "common ports")
+- Every specific item, number, command, example becomes its own topic
+- Never bundle lists
+- Context notes: 2–6 words
+- Topic names: 1–6 words, maximally specific
+- Assign SUBJECT categories (e.g., "Networking", "Database", "Security")
+
+Return JSON:
+{
+  "prompt_theme": "short theme (3-7 words)",
+  "topics": [
+    {"name": "MySQL port 3306", "context": "database networking", "subject": "Database"},
+    {"name": "SSH port 22", "context": "secure shell", "subject": "Networking"},
+    ...
+  ]
+}"""
+
+        questions_text = "\n".join([f"- {q.get('question', '')}" for q in questions])
+        
+        topics_prompt = f"""Generate granular topics to answer these questions:
+
+Questions:
+{questions_text}
+
+Original context:
+{request.text[:500]}...
+
+Return JSON with prompt_theme and topics array (each with name, context, and subject):"""
+
+        topics_response = await call_claude(topics_prompt, topics_system_prompt, max_tokens=16384)
+        
+        # Parse topics response
+        cleaned_topics = topics_response.strip()
+        if cleaned_topics.startswith('```json'):
+            cleaned_topics = cleaned_topics[7:]
+        if cleaned_topics.startswith('```'):
+            cleaned_topics = cleaned_topics[3:]
+        if cleaned_topics.endswith('```'):
+            cleaned_topics = cleaned_topics[:-3]
+        cleaned_topics = cleaned_topics.strip()
+        
+        parsed_data = json.loads(cleaned_topics)
+        
+        if not isinstance(parsed_data, dict) or "topics" not in parsed_data:
+            raise ValueError("Response doesn't have expected 'topics' array")
+        
+        prompt_theme = parsed_data.get("prompt_theme", "Intelligent topic extraction")
+        
+        topics = [
+            Topic(
+                id=f"topic-{idx}",
+                name=topic.get("name", ""),
+                context=topic.get("context", ""),
+                subject=topic.get("subject", "General")
+            )
+            for idx, topic in enumerate(parsed_data["topics"])
+        ]
+        
+        logger.info(f"Successfully generated {len(topics)} granular topics from {len(questions)} questions")
+        
+        # Cache the result
+        cache_data = {
+            "prompt_theme": prompt_theme,
+            "topics": [t.dict() for t in topics],
+            "original_text": request.text,
+            "timestamp": datetime.now().isoformat(),
+            "questions_count": len(questions)
+        }
+        
+        prompt_cache[cache_key] = cache_data
+        save_cache_to_disk(cache_key, cache_data)
+        
+        logger.info("=" * 80)
+        
+        return TopicsListResponse(
+            prompt_theme=prompt_theme,
+            topics=topics,
+            cache_key=cache_key
+        )
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON response: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to parse JSON response: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in extract_topics_intelligent: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -711,6 +1046,151 @@ Create an improved flashcard explanation that incorporates key insights from the
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/organize-flashcards")
+async def organize_flashcards(request: OrganizeFlashcardsRequest):
+    """
+    Organize flashcards into hierarchical structure using AI:
+    1. Group by subjects (already done)
+    2. Within each subject, create sections
+    3. Within sections, create subsections where appropriate
+    4. Assign flashcards to sections/subsections
+    
+    Returns the updated flashcards with section/subsection metadata
+    """
+    logger.info("=" * 80)
+    logger.info(f"Organizing {len(request.flashcard_ids)} flashcards into hierarchy")
+    
+    if len(request.flashcard_ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 flashcards to organize")
+    
+    # Get all flashcards
+    flashcards_to_organize = []
+    for fid in request.flashcard_ids:
+        if fid not in flashcards_storage:
+            raise HTTPException(status_code=404, detail=f"Flashcard {fid} not found")
+        flashcards_to_organize.append(flashcards_storage[fid])
+    
+    # Group by subject first
+    by_subject = {}
+    for fc in flashcards_to_organize:
+        subject = fc.get('subject', 'General')
+        if subject not in by_subject:
+            by_subject[subject] = []
+        by_subject[subject].append(fc)
+    
+    logger.info(f"Found {len(by_subject)} subjects")
+    
+    # Process each subject to create hierarchy
+    updated_count = 0
+    
+    for subject, subject_flashcards in by_subject.items():
+        logger.info(f"Organizing {len(subject_flashcards)} flashcards in subject: {subject}")
+        
+        # Only organize subjects with 30+ flashcards
+        # Smaller subjects don't need hierarchical organization
+        if len(subject_flashcards) < 18:
+            logger.info(f"Skipping {subject}: only {len(subject_flashcards)} flashcards (threshold: 30)")
+            continue
+        
+        # Prepare flashcard summaries for AI
+        flashcard_summaries = "\n".join([
+            f"ID: {fc['id']}\nTopic: {fc['topic']}\nExplanation: {fc['explanation'][:150]}..."
+            for fc in subject_flashcards
+        ])
+        
+        organize_system_prompt = """You are an expert at creating hierarchical knowledge structures.
+
+Analyze flashcards within a subject and organize them into a 2-3 level hierarchy:
+- Sections: Broad thematic groupings (5-15 flashcards per section)
+- Subsections (optional): Finer subdivisions within sections (2-5 flashcards per subsection)
+
+Rules:
+- Create 3-8 sections per subject
+- Only create subsections if a section has 6+ flashcards and clear subdivisions exist
+- Every flashcard must be assigned to a section (and optionally a subsection)
+- Section/subsection names should be clear, descriptive (2-5 words)
+
+Return JSON:
+{
+  "sections": [
+    {
+      "name": "Section Name",
+      "subsections": [
+        {
+          "name": "Subsection Name",
+          "flashcard_ids": ["id1", "id2"]
+        }
+      ],
+      "flashcard_ids": ["id3", "id4"]  // Flashcards directly in section (no subsection)
+    }
+  ]
+}"""
+
+        organize_prompt = f"""Organize these flashcards from subject "{subject}" into a hierarchical structure:
+
+{flashcard_summaries}
+
+Create sections and subsections. Return JSON:"""
+
+        try:
+            organize_response = await call_claude(organize_prompt, organize_system_prompt, max_tokens=8192)
+            
+            cleaned = organize_response.strip()
+            if cleaned.startswith('```json'):
+                cleaned = cleaned[7:]
+            if cleaned.startswith('```'):
+                cleaned = cleaned[3:]
+            if cleaned.endswith('```'):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+            
+            hierarchy_data = json.loads(cleaned)
+            sections = hierarchy_data.get("sections", [])
+            
+            logger.info(f"Created {len(sections)} sections for {subject}")
+            
+            # Apply hierarchy to flashcards
+            for section in sections:
+                section_name = section.get("name", "Uncategorized")
+                subsections = section.get("subsections", [])
+                direct_flashcard_ids = section.get("flashcard_ids", [])
+                
+                # Assign flashcards directly in section (no subsection)
+                for fid in direct_flashcard_ids:
+                    if fid in flashcards_storage:
+                        flashcards_storage[fid]["section"] = section_name
+                        flashcards_storage[fid]["subsection"] = None
+                        updated_count += 1
+                
+                # Assign flashcards in subsections
+                for subsection in subsections:
+                    subsection_name = subsection.get("name", "Uncategorized")
+                    subsection_fc_ids = subsection.get("flashcard_ids", [])
+                    
+                    for fid in subsection_fc_ids:
+                        if fid in flashcards_storage:
+                            flashcards_storage[fid]["section"] = section_name
+                            flashcards_storage[fid]["subsection"] = subsection_name
+                            updated_count += 1
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON for {subject}: {str(e)}", exc_info=True)
+            continue
+        except Exception as e:
+            logger.error(f"Error organizing {subject}: {str(e)}", exc_info=True)
+            continue
+    
+    # Save all changes
+    save_flashcards_to_disk()
+    
+    logger.info(f"Organization complete: Updated {updated_count} flashcards with hierarchy")
+    logger.info("=" * 80)
+    
+    # Return all flashcards
+    all_flashcards = [Flashcard(**data) for data in flashcards_storage.values()]
+    return {"message": f"Organized {updated_count} flashcards", "flashcards": all_flashcards}
+
+
 @app.post("/api/explain-topic", response_model=ExplanationResponse)
 async def explain_topic(request: TopicExplanationRequest):
     """Generate explanation for a single topic."""
@@ -733,6 +1213,132 @@ Explanation:"""
         )
     except Exception as e:
         logger.error(f"Error in explain_topic: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/generate-podcast/{subject}")
+async def generate_podcast(subject: str):
+    """
+    Generate a podcast transcript for a subject by analyzing all flashcards,
+    sections, and subsections to create an engaging narrative.
+    """
+    logger.info("=" * 80)
+    logger.info(f"Generating podcast transcript for subject: {subject}")
+    
+    # Get all flashcards for this subject
+    subject_flashcards = [
+        Flashcard(**fc_data)
+        for fc_data in flashcards_storage.values()
+        if fc_data.get("subject") == subject
+    ]
+    
+    if not subject_flashcards:
+        raise HTTPException(status_code=404, detail=f"No flashcards found for subject: {subject}")
+    
+    # Check if we already have a cached podcast
+    cache_key = f"podcast_{subject.replace(' ', '_').lower()}"
+    if cache_key in prompt_cache:
+        cached_podcast = prompt_cache[cache_key]
+        logger.info(f"Returning cached podcast for {subject}")
+        return SubjectPodcast(
+            subject=subject,
+            transcript=cached_podcast["transcript"],
+            generated_at=cached_podcast["generated_at"]
+        )
+    
+    # Organize flashcards by section and subsection
+    by_section = {}
+    no_section = []
+    
+    for fc in subject_flashcards:
+        section = fc.section
+        subsection = fc.subsection
+        
+        if not section:
+            no_section.append(fc)
+        else:
+            if section not in by_section:
+                by_section[section] = {"subsections": {}, "direct": []}
+            
+            if not subsection:
+                by_section[section]["direct"].append(fc)
+            else:
+                if subsection not in by_section[section]["subsections"]:
+                    by_section[section]["subsections"][subsection] = []
+                by_section[section]["subsections"][subsection].append(fc)
+    
+    # Build content summary for AI
+    content_summary = f"Subject: {subject}\n\n"
+    
+    # Add unorganized flashcards
+    if no_section:
+        content_summary += "Core Topics:\n"
+        for fc in no_section:
+            content_summary += f"- {fc.topic}: {fc.explanation[:200]}...\n"
+        content_summary += "\n"
+    
+    # Add organized content
+    for section_name, section_data in by_section.items():
+        content_summary += f"\n§ {section_name}:\n"
+        
+        for fc in section_data["direct"]:
+            content_summary += f"  - {fc.topic}: {fc.explanation[:200]}...\n"
+        
+        for subsection_name, subsection_cards in section_data["subsections"].items():
+            content_summary += f"\n  › {subsection_name}:\n"
+            for fc in subsection_cards:
+                content_summary += f"    - {fc.topic}: {fc.explanation[:200]}...\n"
+    
+    logger.info(f"Content summary length: {len(content_summary)} characters")
+    
+    # Generate podcast transcript with AI
+    system_prompt = """You are a world-class podcast host and educator, creating engaging audio content.
+
+Create a comprehensive podcast transcript that:
+- Starts with a warm, engaging introduction to the subject
+- Explains concepts in a natural, conversational tone (like you're talking to a curious friend)
+- Uses analogies, examples, and storytelling to make complex topics accessible
+- Shows how different concepts connect and relate to each other
+- Builds knowledge progressively, from fundamentals to advanced topics
+- Includes occasional rhetorical questions to engage the listener
+- Uses transitions like "Now let's talk about...", "Here's the interesting part...", "This connects to..."
+- Ends with a summary and key takeaways
+
+Write as if you're speaking, not writing. Use contractions, casual language, and enthusiasm.
+Length: 1500-3000 words for comprehensive coverage."""
+
+    prompt = f"""Create an engaging podcast transcript about {subject}.
+
+Here's all the content to cover:
+
+{content_summary[:15000]}  # Limit to avoid token overflow
+
+Generate a natural, conversational podcast script that covers all these topics in an engaging way:"""
+
+    try:
+        transcript = await call_claude(prompt, system_prompt, max_tokens=16384)
+        
+        # Cache the result
+        podcast_data = {
+            "subject": subject,
+            "transcript": transcript.strip(),
+            "generated_at": datetime.now().isoformat()
+        }
+        
+        prompt_cache[cache_key] = podcast_data
+        save_cache_to_disk(cache_key, podcast_data)
+        
+        logger.info(f"Generated podcast transcript: {len(transcript)} characters")
+        logger.info("=" * 80)
+        
+        return SubjectPodcast(
+            subject=subject,
+            transcript=transcript.strip(),
+            generated_at=podcast_data["generated_at"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating podcast: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

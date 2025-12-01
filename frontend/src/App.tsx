@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ConceptInput, CachedPrompts, TopicsList, FlashcardList, CreateFlashcard } from './components';
+import { ConceptInput, CachedPrompts, TopicsList, FlashcardList, CreateFlashcard, WikiView, LearnMode } from './components';
 import type { Flashcard, Topic, CachedPrompt } from './types';
 import { 
   listCachedPrompts, 
@@ -7,12 +7,15 @@ import {
   deleteCachedPrompt,
   regenerateCachedPrompt,
   checkCache, 
-  extractTopics, 
+  extractTopics,
+  extractTopicsIntelligent,
+  extractTopicsFromImage,
   generateFlashcards,
   getAllFlashcards,
   createFlashcard,
   updateFlashcard,
   deleteFlashcard,
+  organizeFlashcards,
   sendChatMessage,
   clearChatHistory,
   distillChatToExplanation,
@@ -31,6 +34,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [originalText, setOriginalText] = useState<string>('');
   const [cacheInfo, setCacheInfo] = useState<string | null>(null);
+  const [showWiki, setShowWiki] = useState(false);
+  const [showLearnMode, setShowLearnMode] = useState(false);
 
   // Load cached prompts and saved flashcards on mount
   useEffect(() => {
@@ -123,7 +128,7 @@ function App() {
     }
   };
 
-  const handleGenerateTopics = async (text: string, filterNovelOnly: boolean) => {
+  const handleGenerateTopics = async (text: string, filterNovelOnly: boolean, useIntelligentExtraction: boolean, useConciseMode: boolean) => {
     setIsExtractingTopics(true);
     setError(null);
     setCacheInfo(null);
@@ -162,7 +167,9 @@ function App() {
         return;
       }
 
-      const response = await extractTopics(text);
+      const response = useIntelligentExtraction 
+        ? await extractTopicsIntelligent(text, useConciseMode)
+        : await extractTopics(text, useConciseMode);
       let resultTopics = response.topics;
       
       // Filter out existing topics if requested
@@ -196,6 +203,52 @@ function App() {
         setError('Failed to extract topics. Please try again.');
       }
       console.error('Error extracting topics:', err);
+    } finally {
+      setIsExtractingTopics(false);
+    }
+  };
+
+  const handleGenerateTopicsFromImage = async (file: File, filterNovelOnly: boolean, useConciseMode: boolean) => {
+    setIsExtractingTopics(true);
+    setError(null);
+    setCacheInfo(null);
+    setOriginalText(`[Image: ${file.name}]`);
+    
+    try {
+      const response = await extractTopicsFromImage(file);
+      let resultTopics = response.topics;
+      
+      // Filter out existing topics if requested
+      if (filterNovelOnly && flashcards.length > 0) {
+        const existingTopicNames = new Set(
+          flashcards.map(fc => fc.topic.toLowerCase().trim())
+        );
+        const beforeCount = resultTopics.length;
+        resultTopics = resultTopics.filter(
+          topic => !existingTopicNames.has(topic.name.toLowerCase().trim())
+        );
+        const filteredCount = beforeCount - resultTopics.length;
+        
+        if (filteredCount > 0) {
+          setCacheInfo(`✓ Extracted ${resultTopics.length} novel topic${resultTopics.length !== 1 ? 's' : ''} from image (filtered out ${filteredCount} existing)`);
+        } else {
+          setCacheInfo(`✓ Extracted ${resultTopics.length} topic${resultTopics.length !== 1 ? 's' : ''} from image (all novel)`);
+        }
+      } else {
+        setCacheInfo(`✓ Extracted ${resultTopics.length} topic${resultTopics.length !== 1 ? 's' : ''} from "${response.prompt_theme}"`);
+      }
+      
+      setTopics(resultTopics);
+      setPromptTheme(response.prompt_theme);
+      
+      await loadCachedPrompts();
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to extract topics from image. Please try again.');
+      }
+      console.error('Error extracting topics from image:', err);
     } finally {
       setIsExtractingTopics(false);
     }
@@ -388,6 +441,41 @@ function App() {
     }
   };
 
+  const handleOrganizeFlashcards = async () => {
+    if (flashcards.length < 2) {
+      setError('Need at least 2 flashcards to organize');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Organize all ${flashcards.length} flashcards into a hierarchy?\n\nAI will:\n1. Analyze flashcards within each subject\n2. Create sections (broad themes)\n3. Create subsections (finer subdivisions)\n4. Assign each flashcard to a section/subsection\n\nNo flashcards will be deleted or modified, only organized!`
+    );
+
+    if (!confirmed) return;
+
+    setIsGeneratingFlashcards(true);
+    setError(null);
+
+    try {
+      const allIds = flashcards.map(fc => fc.id);
+      const result = await organizeFlashcards(allIds);
+      
+      // Reload all flashcards from server
+      await loadSavedFlashcards();
+      
+      setCacheInfo(`✓ ${result.message}`);
+    } catch (err) {
+      if (err instanceof APIError) {
+        setError(err.message);
+      } else {
+        setError('Failed to organize flashcards. Please try again.');
+      }
+      console.error('Error organizing flashcards:', err);
+    } finally {
+      setIsGeneratingFlashcards(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <div className="container mx-auto px-4 py-8">
@@ -448,6 +536,7 @@ function App() {
         {/* Step 1: Concept Input */}
         <ConceptInput 
           onGenerateTopics={handleGenerateTopics}
+          onGenerateTopicsFromImage={handleGenerateTopicsFromImage}
           isLoading={isExtractingTopics}
         />
 
@@ -487,7 +576,26 @@ function App() {
           onClearChat={handleClearChat}
           onDistillChat={handleDistillChat}
           onGenerateExplanation={handleGenerateExplanation}
+          onOrganize={handleOrganizeFlashcards}
+          onOpenWiki={() => setShowWiki(true)}
+          onOpenLearnMode={() => setShowLearnMode(true)}
         />
+
+        {/* Wiki View Modal */}
+        {showWiki && (
+          <WikiView 
+            flashcards={flashcards}
+            onClose={() => setShowWiki(false)}
+          />
+        )}
+
+        {/* Learn Mode Modal */}
+        {showLearnMode && (
+          <LearnMode 
+            flashcards={flashcards}
+            onClose={() => setShowLearnMode(false)}
+          />
+        )}
       </div>
     </div>
   );

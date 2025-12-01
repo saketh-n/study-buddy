@@ -32,6 +32,8 @@ study-buddy/
 - ⚡ **Real-time Loading States** - Visual feedback during AI generation
 - 🎨 **Modern, Responsive UI** - Beautiful interface with Tailwind CSS
 - 🚀 **Fast & Efficient** - Async operations with smooth animations
+- 🎙️ **AI-Generated Podcasts** - Transform any subject into an engaging audio narrative
+- 🔊 **Text-to-Speech** - Listen to podcast transcripts with built-in browser TTS (upgradable to ElevenLabs/NotebookLM)
 
 ## Getting Started
 
@@ -179,6 +181,13 @@ Step 4: Generate Flashcards
 Step 5: Study!
 - Flip cards to review
 - Regenerate explanations if needed
+
+Step 6: Generate Podcast (Optional)
+- Open Wiki View for a subject
+- Click "Generate Podcast" to create an engaging narrative
+- AI synthesizes all topics into a comprehensive story
+- Listen with built-in text-to-speech
+- Transcripts are cached to avoid repeat API calls
 ```
 
 ## Tech Stack
@@ -189,12 +198,15 @@ Step 5: Study!
 - **Vite** - Build tool and dev server
 - **Tailwind CSS** - Styling
 - **Modern ES6+** - Latest JavaScript features
+- **Web Speech API** - Built-in browser text-to-speech
+- **jsPDF** - PDF export for flashcards
 
 ### Backend
 - **FastAPI** - Modern Python web framework
 - **Pydantic** - Data validation
 - **Uvicorn** - ASGI server
 - **CORS** - Cross-origin resource sharing enabled
+- **Anthropic Claude API** - AI for content generation, chat, and podcast transcripts
 
 ## Roadmap
 

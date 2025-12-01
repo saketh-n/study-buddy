@@ -18,11 +18,14 @@ export interface Flashcard {
   subject: string; // NEW: For categorization
   explanation: string;
   chat_history: ChatMessage[];
+  section?: string; // Section within subject
+  subsection?: string; // Subsection within section
   isGeneratingExplanation?: boolean;
 }
 
 export interface ConceptInputProps {
-  onGenerateTopics: (text: string, filterNovelOnly: boolean) => void;
+  onGenerateTopics: (text: string, filterNovelOnly: boolean, useIntelligentExtraction: boolean, useConciseMode: boolean) => void;
+  onGenerateTopicsFromImage: (file: File, filterNovelOnly: boolean, useConciseMode: boolean) => void;
   isLoading?: boolean;
 }
 
@@ -67,6 +70,9 @@ export interface FlashcardListProps {
   onClearChat: (id: string) => void;
   onDistillChat: (id: string) => void;
   onGenerateExplanation: (id: string, topic: string) => void;
+  onOrganize?: () => void;
+  onOpenWiki?: () => void;
+  onOpenLearnMode?: () => void;
 }
 
 // API Response types
