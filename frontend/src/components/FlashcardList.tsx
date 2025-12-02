@@ -18,20 +18,40 @@ export const FlashcardList = ({
   const [collapsedSubjects, setCollapsedSubjects] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [isExporting, setIsExporting] = useState(false);
+  const [selectedPromptTheme, setSelectedPromptTheme] = useState<string>('all');
 
-  // Filter flashcards based on search query (must be before early return to follow Rules of Hooks)
+  // Get unique prompt themes for filtering
+  const promptThemes = useMemo(() => {
+    const themes = new Set<string>();
+    flashcards.forEach(f => {
+      if (f.prompt_theme) {
+        themes.add(f.prompt_theme);
+      }
+    });
+    return Array.from(themes).sort();
+  }, [flashcards]);
+
+  // Filter flashcards based on search query and prompt theme (must be before early return to follow Rules of Hooks)
   const filteredFlashcards = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return flashcards;
+    let result = flashcards;
+    
+    // Filter by prompt theme
+    if (selectedPromptTheme !== 'all') {
+      result = result.filter(f => f.prompt_theme === selectedPromptTheme);
     }
     
-    const query = searchQuery.toLowerCase();
-    return flashcards.filter(flashcard => 
-      flashcard.topic.toLowerCase().includes(query) ||
-      flashcard.explanation.toLowerCase().includes(query) ||
-      (flashcard.subject || 'General').toLowerCase().includes(query)
-    );
-  }, [flashcards, searchQuery]);
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(flashcard => 
+        flashcard.topic.toLowerCase().includes(query) ||
+        flashcard.explanation.toLowerCase().includes(query) ||
+        (flashcard.subject || 'General').toLowerCase().includes(query)
+      );
+    }
+    
+    return result;
+  }, [flashcards, searchQuery, selectedPromptTheme]);
 
   if (flashcards.length === 0) {
     return (
@@ -200,39 +220,74 @@ export const FlashcardList = ({
           </div>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Search flashcards by topic, content, or subject..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-3 pr-12 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              aria-label="Clear search"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-          {!searchQuery && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+        {/* Search Bar and Filters */}
+        <div className="flex gap-3 flex-wrap">
+          {/* Search Input */}
+          <div className="relative flex-1 min-w-[200px]">
+            <input
+              type="text"
+              placeholder="Search flashcards by topic, content, or subject..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-4 py-3 pr-12 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                aria-label="Clear search"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+            {!searchQuery && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+            )}
+          </div>
+
+          {/* Prompt Theme Filter */}
+          {promptThemes.length > 0 && (
+            <div className="relative min-w-[200px]">
+              <select
+                value={selectedPromptTheme}
+                onChange={(e) => setSelectedPromptTheme(e.target.value)}
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition appearance-none bg-white cursor-pointer"
+              >
+                <option value="all">All Study Sessions</option>
+                {promptThemes.map(theme => (
+                  <option key={theme} value={theme}>{theme}</option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
             </div>
           )}
         </div>
         
-        {/* Search results info */}
-        {searchQuery && (
+        {/* Filter results info */}
+        {(searchQuery || selectedPromptTheme !== 'all') && (
           <p className="mt-2 text-sm text-gray-600">
             Showing {filteredFlashcards.length} of {flashcards.length} flashcard{flashcards.length !== 1 ? 's' : ''}
+            {selectedPromptTheme !== 'all' && (
+              <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
+                Session: {selectedPromptTheme}
+                <button 
+                  onClick={() => setSelectedPromptTheme('all')}
+                  className="ml-1 hover:text-blue-900"
+                >
+                  ×
+                </button>
+              </span>
+            )}
           </p>
         )}
       </div>

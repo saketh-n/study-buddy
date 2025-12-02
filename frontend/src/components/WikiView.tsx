@@ -1,19 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Flashcard } from '../types';
-import { generatePodcast } from '../services/api';
+import { generatePodcast, distillSubject, listCachedDistillPrompts } from '../services/api';
+import { renderMarkdown } from '../utils/markdown';
 
 interface WikiViewProps {
   flashcards: Flashcard[];
   onClose: () => void;
 }
 
+interface CachedDistillPrompt {
+  subject: string;
+  user_prompt: string;
+  cache_key: string;
+  generated_at: string;
+}
+
 export const WikiView = ({ flashcards, onClose }: WikiViewProps) => {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const [collapsedSubsections, setCollapsedSubsections] = useState<Set<string>>(new Set());
   const [showPodcast, setShowPodcast] = useState(false);
+  const [showDistill, setShowDistill] = useState(false);
   const [podcastTranscript, setPodcastTranscript] = useState<string>('');
+  const [distillSummary, setDistillSummary] = useState<string>('');
+  const [distillPrompt, setDistillPrompt] = useState<string>("I am a software engineer with a few years of experience preparing for the next step in my career. What are the most important things to know?");
   const [isGeneratingPodcast, setIsGeneratingPodcast] = useState(false);
+  const [isGeneratingDistill, setIsGeneratingDistill] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [cachedDistillPrompts, setCachedDistillPrompts] = useState<CachedDistillPrompt[]>([]);
 
   const toggleSection = (sectionName: string) => {
     setCollapsedSections(prev => {
@@ -125,6 +138,51 @@ export const WikiView = ({ flashcards, onClose }: WikiViewProps) => {
     }
   };
 
+  const handleDistillSubject = async () => {
+    setIsGeneratingDistill(true);
+    try {
+      const result = await distillSubject(selectedSubject, distillPrompt);
+      setDistillSummary(result.summary);
+      // Reload cached prompts
+      loadCachedDistillPrompts();
+    } catch (error) {
+      console.error('Error distilling subject:', error);
+      alert('Failed to distill subject. Please try again.');
+    } finally {
+      setIsGeneratingDistill(false);
+    }
+  };
+
+  const loadCachedDistillPrompts = async () => {
+    try {
+      const prompts = await listCachedDistillPrompts(selectedSubject);
+      setCachedDistillPrompts(prompts);
+    } catch (error) {
+      console.error('Error loading cached distill prompts:', error);
+    }
+  };
+
+  const handleSelectCachedPrompt = async (prompt: CachedDistillPrompt) => {
+    setDistillPrompt(prompt.user_prompt);
+    setIsGeneratingDistill(true);
+    try {
+      const result = await distillSubject(selectedSubject, prompt.user_prompt);
+      setDistillSummary(result.summary);
+    } catch (error) {
+      console.error('Error loading cached distill:', error);
+      alert('Failed to load cached summary.');
+    } finally {
+      setIsGeneratingDistill(false);
+    }
+  };
+
+  // Load cached distill prompts when subject changes or distill view opens
+  useEffect(() => {
+    if (showDistill && selectedSubject) {
+      loadCachedDistillPrompts();
+    }
+  }, [showDistill, selectedSubject]);
+
   if (flashcards.length === 0) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -190,6 +248,28 @@ export const WikiView = ({ flashcards, onClose }: WikiViewProps) => {
             <div className="max-w-4xl mx-auto px-8 py-4 flex justify-between items-center">
               <h1 className="text-3xl font-bold text-gray-800">{selectedSubject}</h1>
               <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDistill(true)}
+                  disabled={isGeneratingDistill}
+                  className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {isGeneratingDistill ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Distilling...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                      Distill Key Info
+                    </>
+                  )}
+                </button>
                 <button
                   onClick={handleGeneratePodcast}
                   disabled={isGeneratingPodcast}
@@ -282,6 +362,96 @@ export const WikiView = ({ flashcards, onClose }: WikiViewProps) => {
                 <p className="text-sm text-gray-700">
                   <strong>Note:</strong> Currently using basic browser text-to-speech. 
                   For better quality audio, we can integrate ElevenLabs or NotebookLM in the future.
+                </p>
+              </div>
+            </div>
+          ) : showDistill ? (
+            /* Distill Summary View */
+            <div className="max-w-4xl mx-auto px-8 py-8">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-amber-800 flex items-center gap-2 mb-4">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                  Key Information: {selectedSubject}
+                </h2>
+                
+                {/* User prompt input */}
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                  <label className="block text-sm font-semibold text-amber-800 mb-2">
+                    Who are you? (This helps tailor the summary)
+                  </label>
+                  <textarea
+                    value={distillPrompt}
+                    onChange={(e) => setDistillPrompt(e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-2 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    placeholder="Describe your background and what you need to learn..."
+                  />
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={handleDistillSubject}
+                      disabled={isGeneratingDistill}
+                      className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      {isGeneratingDistill ? (
+                        <>
+                          <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Generating...
+                        </>
+                      ) : (
+                        'Generate Summary'
+                      )}
+                    </button>
+                    <button
+                      onClick={() => { setShowDistill(false); setDistillSummary(''); }}
+                      className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                      </svg>
+                      Back to Wiki
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cached Prompts */}
+              {cachedDistillPrompts.length > 0 && !distillSummary && (
+                <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <h3 className="font-semibold text-gray-700 mb-3">Previously Used Prompts</h3>
+                  <div className="space-y-2">
+                    {cachedDistillPrompts.map((prompt, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSelectCachedPrompt(prompt)}
+                        className="w-full text-left p-3 bg-white border border-gray-200 rounded-lg hover:bg-amber-50 hover:border-amber-300 transition"
+                      >
+                        <div className="text-sm text-gray-800 line-clamp-2">{prompt.user_prompt}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {new Date(prompt.generated_at).toLocaleDateString()}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {distillSummary && (
+                <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-8 border-2 border-amber-200">
+                  <div 
+                    className="prose prose-lg max-w-none text-gray-800 leading-relaxed"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(distillSummary) }}
+                  />
+                </div>
+              )}
+
+              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-gray-700">
+                  <strong>Tip:</strong> Summaries are cached based on your prompt. Try different prompts for different perspectives!
                 </p>
               </div>
             </div>

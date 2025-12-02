@@ -3,7 +3,9 @@ export interface Topic {
   id: string;
   name: string;
   context: string;
-  subject: string; // NEW: Category like "Networking", "Storage", "Security"
+  subject: string; // Category like "Networking", "Storage", "Security"
+  section?: string; // Section within subject
+  subsection?: string; // Subsection within section
 }
 
 export interface ChatMessage {
@@ -15,11 +17,12 @@ export interface ChatMessage {
 export interface Flashcard {
   id: string;
   topic: string;
-  subject: string; // NEW: For categorization
+  subject: string; // For categorization
   explanation: string;
   chat_history: ChatMessage[];
   section?: string; // Section within subject
   subsection?: string; // Subsection within section
+  prompt_theme?: string; // Parent prompt theme for filtering
   isGeneratingExplanation?: boolean;
 }
 
@@ -48,13 +51,16 @@ export interface TopicsListProps {
   topics: Topic[];
   promptTheme?: string;
   onUpdateTopics: (topics: Topic[]) => void;
-  onGenerateFlashcards: () => void;
+  onGenerateFlashcards: (selectedTopicIds: string[]) => void;
   isGenerating?: boolean;
+  isExtractingTopics?: boolean;
+  generationProgress?: GenerationProgress;
+  processingTopicIds?: string[]; // Topics currently being processed
 }
 
 export interface FlashcardProps {
   flashcard: Flashcard;
-  onUpdate: (id: string, field: 'topic' | 'explanation', value: string) => void;
+  onUpdate: (id: string, field: 'topic' | 'explanation' | 'subject' | 'section' | 'subsection', value: string) => void;
   onDelete: (id: string) => void;
   onSendChatMessage: (id: string, message: string) => void;
   onClearChat: (id: string) => void;
@@ -64,7 +70,7 @@ export interface FlashcardProps {
 
 export interface FlashcardListProps {
   flashcards: Flashcard[];
-  onUpdate: (id: string, field: 'topic' | 'explanation', value: string) => void;
+  onUpdate: (id: string, field: 'topic' | 'explanation' | 'subject' | 'section' | 'subsection', value: string) => void;
   onDelete: (id: string) => void;
   onSendChatMessage: (id: string, message: string) => void;
   onClearChat: (id: string) => void;
@@ -117,4 +123,22 @@ export interface CreateFlashcardRequest {
 
 export interface DistillResponse {
   flashcard: Flashcard;
+}
+
+export interface GenerationProgress {
+  type: 'start' | 'batch_start' | 'progress' | 'complete';
+  total?: number;
+  completed?: number;
+  topic?: string;
+  subject?: string;
+  batch?: number;
+  topics?: string[];
+  topic_ids?: string[]; // IDs of topics currently being processed
+}
+
+export interface DistillSummaryResponse {
+  subject: string;
+  summary: string;
+  user_prompt: string;
+  generated_at: string;
 }

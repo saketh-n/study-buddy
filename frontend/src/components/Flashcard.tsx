@@ -13,16 +13,40 @@ export const Flashcard = ({
   const [isFlipped, setIsFlipped] = useState(false);
   const [isEditingTopic, setIsEditingTopic] = useState(false);
   const [isEditingExplanation, setIsEditingExplanation] = useState(false);
+  const [isEditingTags, setIsEditingTags] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [editTopicValue, setEditTopicValue] = useState(flashcard.topic);
   const [editExplanationValue, setEditExplanationValue] = useState(flashcard.explanation);
+  const [editSubjectValue, setEditSubjectValue] = useState(flashcard.subject);
+  const [editSectionValue, setEditSectionValue] = useState(flashcard.section || '');
+  const [editSubsectionValue, setEditSubsectionValue] = useState(flashcard.subsection || '');
   const [chatMessage, setChatMessage] = useState('');
   const [isSendingChat, setIsSendingChat] = useState(false);
 
   const handleFlip = () => {
-    if (!isEditingTopic && !isEditingExplanation && !isChatOpen) {
+    if (!isEditingTopic && !isEditingExplanation && !isEditingTags && !isChatOpen) {
       setIsFlipped(!isFlipped);
     }
+  };
+
+  const handleSaveTags = () => {
+    if (editSubjectValue.trim() !== flashcard.subject) {
+      onUpdate(flashcard.id, 'subject', editSubjectValue.trim());
+    }
+    if (editSectionValue !== (flashcard.section || '')) {
+      onUpdate(flashcard.id, 'section', editSectionValue.trim());
+    }
+    if (editSubsectionValue !== (flashcard.subsection || '')) {
+      onUpdate(flashcard.id, 'subsection', editSubsectionValue.trim());
+    }
+    setIsEditingTags(false);
+  };
+
+  const handleStartEditTags = () => {
+    setEditSubjectValue(flashcard.subject);
+    setEditSectionValue(flashcard.section || '');
+    setEditSubsectionValue(flashcard.subsection || '');
+    setIsEditingTags(true);
   };
 
   const handleSaveTopic = () => {
@@ -71,9 +95,82 @@ export const Flashcard = ({
     <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-gray-200 min-h-[300px] flex flex-col">
       {/* Header with subject badge and actions */}
       <div className="flex justify-between items-start mb-4">
-        <span className="text-xs font-semibold px-2 py-1 bg-blue-100 text-blue-800 rounded">
-          {flashcard.subject}
-        </span>
+        {isEditingTags ? (
+          <div onClick={(e) => e.stopPropagation()} className="flex-1 mr-2 space-y-2">
+            <div className="flex gap-2 items-center">
+              <label className="text-xs text-gray-500 w-16">Subject:</label>
+              <input
+                type="text"
+                value={editSubjectValue}
+                onChange={(e) => setEditSubjectValue(e.target.value)}
+                className="flex-1 text-xs px-2 py-1 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500"
+                placeholder="Subject"
+              />
+            </div>
+            <div className="flex gap-2 items-center">
+              <label className="text-xs text-gray-500 w-16">Section:</label>
+              <input
+                type="text"
+                value={editSectionValue}
+                onChange={(e) => setEditSectionValue(e.target.value)}
+                className="flex-1 text-xs px-2 py-1 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500"
+                placeholder="Section (optional)"
+              />
+            </div>
+            <div className="flex gap-2 items-center">
+              <label className="text-xs text-gray-500 w-16">Subsection:</label>
+              <input
+                type="text"
+                value={editSubsectionValue}
+                onChange={(e) => setEditSubsectionValue(e.target.value)}
+                className="flex-1 text-xs px-2 py-1 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500"
+                placeholder="Subsection (optional)"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveTags}
+                className="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setIsEditingTags(false)}
+                className="text-xs bg-gray-500 hover:bg-gray-600 text-white px-2 py-1 rounded"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-1 items-center group">
+            <span className="text-xs font-semibold px-2 py-1 bg-blue-100 text-blue-800 rounded">
+              {flashcard.subject}
+            </span>
+            {flashcard.section && (
+              <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded">
+                {flashcard.section}
+              </span>
+            )}
+            {flashcard.subsection && (
+              <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
+                {flashcard.subsection}
+              </span>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStartEditTags();
+              }}
+              className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-600 transition"
+              title="Edit tags"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+          </div>
+        )}
         <div className="flex gap-2">
           <button
             onClick={() => setIsChatOpen(!isChatOpen)}

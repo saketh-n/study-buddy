@@ -4,10 +4,12 @@ import logging
 import hashlib
 import uuid
 import base64
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from anthropic import Anthropic
@@ -137,7 +139,9 @@ class Topic(BaseModel):
     id: str
     name: str
     context: str
-    subject: str  # NEW: e.g., "Networking", "Storage", "Security"
+    subject: str  # e.g., "Networking", "Storage", "Security"
+    section: Optional[str] = None  # Section within subject
+    subsection: Optional[str] = None  # Subsection within section
 
 
 class TopicsListResponse(BaseModel):
@@ -155,11 +159,12 @@ class ChatMessage(BaseModel):
 class Flashcard(BaseModel):
     id: str
     topic: str
-    subject: str  # NEW: for categorization
+    subject: str  # for categorization
     explanation: str
     chat_history: List[ChatMessage] = []
     section: Optional[str] = None  # Section within subject
     subsection: Optional[str] = None  # Subsection within section
+    prompt_theme: Optional[str] = None  # Parent prompt theme for filtering
 
 
 class SubjectPodcast(BaseModel):
@@ -171,6 +176,7 @@ class SubjectPodcast(BaseModel):
 class GenerateFlashcardsRequest(BaseModel):
     topics: List[Topic]
     original_text: Optional[str] = None
+    prompt_theme: Optional[str] = None  # Parent prompt theme for tracking
 
 
 class FlashcardsResponse(BaseModel):
@@ -180,6 +186,9 @@ class FlashcardsResponse(BaseModel):
 class UpdateFlashcardRequest(BaseModel):
     topic: Optional[str] = None
     explanation: Optional[str] = None
+    subject: Optional[str] = None
+    section: Optional[str] = None
+    subsection: Optional[str] = None
 
 
 class CreateFlashcardRequest(BaseModel):
@@ -188,6 +197,12 @@ class CreateFlashcardRequest(BaseModel):
     explanation: Optional[str] = None
     generate_explanation: bool = False  # If True, use AI to generate explanation
     context: Optional[str] = None  # Context for AI generation
+    section: Optional[str] = None  # Optional section for organization
+    subsection: Optional[str] = None  # Optional subsection for organization
+
+
+class DistillSectionRequest(BaseModel):
+    user_prompt: str = "I am a software engineer with a few years of experience preparing for the next step in my career. What are the most important things to know?"
 
 
 class OrganizeFlashcardsRequest(BaseModel):
@@ -246,27 +261,36 @@ def generate_cache_key(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
 
 
+def _call_claude_sync(prompt: str, system_prompt: str = None, max_tokens: int = 16384) -> str:
+    """Synchronous Claude API call - runs in thread pool."""
+    kwargs = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}]
+    }
+    
+    if system_prompt:
+        kwargs["system"] = system_prompt
+    
+    logger.info(f"Calling Claude API with max_tokens={max_tokens}")
+    
+    message = anthropic_client.messages.create(**kwargs)
+    response_text = message.content[0].text
+    
+    logger.info(f"Claude API Response (length: {len(response_text)} chars)")
+    logger.info(f"Stop reason: {message.stop_reason}")
+    logger.info(f"Tokens used - Input: {message.usage.input_tokens}, Output: {message.usage.output_tokens}")
+    
+    return response_text
+
+
 async def call_claude(prompt: str, system_prompt: str = None, max_tokens: int = 16384) -> str:
-    """Call Claude Sonnet API with the given prompt."""
+    """Call Claude Sonnet API with the given prompt - non-blocking."""
     try:
-        kwargs = {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}]
-        }
-        
-        if system_prompt:
-            kwargs["system"] = system_prompt
-        
-        logger.info(f"Calling Claude API with max_tokens={max_tokens}")
-        
-        message = anthropic_client.messages.create(**kwargs)
-        response_text = message.content[0].text
-        
-        logger.info(f"Claude API Response (length: {len(response_text)} chars)")
-        logger.info(f"Stop reason: {message.stop_reason}")
-        logger.info(f"Tokens used - Input: {message.usage.input_tokens}, Output: {message.usage.output_tokens}")
-        
+        # Run the synchronous API call in a thread pool to avoid blocking the event loop
+        response_text = await asyncio.to_thread(
+            _call_claude_sync, prompt, system_prompt, max_tokens
+        )
         return response_text
     except Exception as e:
         logger.error(f"Error calling Claude API: {str(e)}", exc_info=True)
@@ -399,13 +423,16 @@ Hard rules:
 - Group related items (e.g., "Common network ports" instead of each port separately).
 - Context notes: 2–6 words only.
 - Topic names: 1–6 words, clear and specific.
-- For each topic, assign a SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", etc.
+- For each topic, assign:
+  - SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", etc.
+  - SECTION (optional): A broad grouping within the subject (e.g., "TCP/IP", "Authentication", "Data Structures")
+  - SUBSECTION (optional): A finer grouping within the section (e.g., "Handshake", "OAuth", "Trees")
 
 Return JSON:
 {
   "prompt_theme": "short theme (3-7 words)",
   "topics": [
-    {"name": "Topic", "context": "brief note", "subject": "Category"},
+    {"name": "Topic", "context": "brief note", "subject": "Category", "section": "BroadGroup", "subsection": "FinerGroup"},
     ...
   ]
 }"""
@@ -418,23 +445,33 @@ Hard rules:
 - Never bundle lists — each item is separate.
 - Context notes: 2–6 words only.
 - Topic names: 1–6 words, maximally specific (e.g., "SSH port 22", "Python 3.11").
-- For each topic, assign a SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", "Hardware", "Database", "Cloud", "Math", "Physics", etc.
+- For each topic, assign:
+  - SUBJECT category (1-2 words) like: "Networking", "Storage", "Security", "Programming", "Hardware", "Database", "Cloud", "Math", "Physics", etc.
+  - SECTION (optional): A broad grouping within the subject (e.g., "TCP/IP", "Authentication", "Data Structures")
+  - SUBSECTION (optional): A finer grouping within the section (e.g., "Handshake", "OAuth", "Trees")
 
 Return JSON:
 {
   "prompt_theme": "short theme (3-7 words)",
   "topics": [
-    {"name": "Topic", "context": "brief note", "subject": "Category"},
+    {"name": "Topic", "context": "brief note", "subject": "Category", "section": "BroadGroup", "subsection": "FinerGroup"},
     ...
   ]
 }"""
 
-    prompt = f"""Analyze this text and extract ALL discrete topics with subjects:
+    prompt = f"""Analyze this text and extract ALL discrete topics.
+
+IMPORTANT: For each topic, you MUST include:
+- name: The topic name (1-6 words)
+- context: Brief context note (2-6 words)
+- subject: Category like "Networking", "Security", "Programming", etc.
+- section: A broad grouping within the subject (ALWAYS provide this - e.g., "TCP/IP Fundamentals", "Authentication Methods", "Data Structures")
+- subsection: A finer grouping within the section (provide when logical - e.g., "Three-Way Handshake", "OAuth 2.0", "Binary Trees")
 
 Text:
 {request.text}
 
-Return JSON with prompt_theme, and topics array (each with name, context, and subject):"""
+Return JSON with prompt_theme and topics array. EVERY topic must have section filled in:"""
 
     try:
         response = await call_claude(prompt, system_prompt, max_tokens=16384)
@@ -460,7 +497,9 @@ Return JSON with prompt_theme, and topics array (each with name, context, and su
                 id=f"topic-{idx}",
                 name=topic.get("name", ""),
                 context=topic.get("context", ""),
-                subject=topic.get("subject", "General")
+                subject=topic.get("subject", "General"),
+                section=topic.get("section"),
+                subsection=topic.get("subsection")
             )
             for idx, topic in enumerate(parsed_data["topics"])
         ]
@@ -541,32 +580,36 @@ Return JSON:
 }"""
 
     try:
-        # Call Claude Vision API
+        # Call Claude Vision API in thread pool to avoid blocking
         logger.info("Calling Claude Vision API...")
-        message = anthropic_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=16384,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": content_type,
-                                "data": image_base64,
+        
+        def _call_vision_api():
+            return anthropic_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=16384,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": content_type,
+                                    "data": image_base64,
+                                },
                             },
-                        },
-                        {
-                            "type": "text",
-                            "text": "Analyze this image and extract ALL topics, questions, and concepts with their subjects. Return JSON with prompt_theme and topics array:"
-                        }
-                    ],
-                }
-            ],
-        )
+                            {
+                                "type": "text",
+                                "text": "Analyze this image and extract ALL topics, questions, and concepts. For each topic include: name, context, subject, section (ALWAYS provide this), and subsection (when logical). Return JSON with prompt_theme and topics array:"
+                            }
+                        ],
+                    }
+                ],
+            )
+        
+        message = await asyncio.to_thread(_call_vision_api)
         
         response_text = message.content[0].text
         logger.info(f"Vision API response length: {len(response_text)} characters")
@@ -594,7 +637,9 @@ Return JSON:
                 id=f"topic-{idx}",
                 name=topic.get("name", ""),
                 context=topic.get("context", ""),
-                subject=topic.get("subject", "General")
+                subject=topic.get("subject", "General"),
+                section=topic.get("section"),
+                subsection=topic.get("subsection")
             )
             for idx, topic in enumerate(parsed_data["topics"])
         ]
@@ -733,7 +778,14 @@ Questions:
 Original context:
 {request.text[:500]}...
 
-Return JSON with prompt_theme and topics array (each with name, context, and subject):"""
+IMPORTANT: For each topic, you MUST include:
+- name: The topic name (1-6 words)
+- context: Brief context note (2-6 words)
+- subject: Category like "Networking", "Security", "Programming", etc.
+- section: A broad grouping within the subject (ALWAYS provide this)
+- subsection: A finer grouping within the section (provide when logical)
+
+Return JSON with prompt_theme and topics array. EVERY topic must have section filled in:"""
 
         topics_response = await call_claude(topics_prompt, topics_system_prompt, max_tokens=16384)
         
@@ -759,7 +811,9 @@ Return JSON with prompt_theme and topics array (each with name, context, and sub
                 id=f"topic-{idx}",
                 name=topic.get("name", ""),
                 context=topic.get("context", ""),
-                subject=topic.get("subject", "General")
+                subject=topic.get("subject", "General"),
+                section=topic.get("section"),
+                subsection=topic.get("subsection")
             )
             for idx, topic in enumerate(parsed_data["topics"])
         ]
@@ -794,63 +848,137 @@ Return JSON with prompt_theme and topics array (each with name, context, and sub
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/generate-flashcards", response_model=FlashcardsResponse)
-async def generate_flashcards(request: GenerateFlashcardsRequest):
-    """Generate flashcards from topics and save to storage."""
-    logger.info("=" * 80)
-    logger.info(f"Generating flashcards for {len(request.topics)} topics")
+async def generate_single_flashcard(topic: Topic, prompt_theme: Optional[str] = None) -> Flashcard:
+    """Generate a single flashcard from a topic."""
+    flashcard_id = str(uuid.uuid4())
     
-    flashcards = []
+    logger.info(f"Generating explanation for: {topic.name} (subject: {topic.subject})")
     
-    for topic in request.topics:
-        # Generate unique ID
-        flashcard_id = str(uuid.uuid4())
-        
-        logger.info(f"Generating explanation for: {topic.name} (subject: {topic.subject})")
-        
-        system_prompt = """You are an expert educator. Create clear, concise explanations for study flashcards (2-4 sentences)."""
-        
-        context_note = f" (context: {topic.context})" if topic.context else ""
-        prompt = f"""Explain this topic for a flashcard:
+    system_prompt = """You are an expert educator. Create clear, concise explanations for study flashcards (2-4 sentences)."""
+    
+    context_note = f" (context: {topic.context})" if topic.context else ""
+    prompt = f"""Explain this topic for a flashcard:
 
 Topic: {topic.name}{context_note}
 
 Explanation:"""
 
-        try:
-            explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
-            
-            flashcard = Flashcard(
-                id=flashcard_id,
-                topic=topic.name,
-                subject=topic.subject,
-                explanation=explanation.strip(),
-                chat_history=[]
-            )
-            flashcards.append(flashcard)
-            
-            # Save to storage
-            flashcards_storage[flashcard_id] = flashcard.dict()
-            
-        except Exception as e:
-            logger.error(f"Error generating explanation for {topic.name}: {str(e)}")
-            flashcard = Flashcard(
-                id=flashcard_id,
-                topic=topic.name,
-                subject=topic.subject,
-                explanation=f"Error: {str(e)}",
-                chat_history=[]
-            )
-            flashcards.append(flashcard)
-            flashcards_storage[flashcard_id] = flashcard.dict()
+    try:
+        explanation = await call_claude(prompt, system_prompt, max_tokens=2048)
+        
+        flashcard = Flashcard(
+            id=flashcard_id,
+            topic=topic.name,
+            subject=topic.subject,
+            explanation=explanation.strip(),
+            chat_history=[],
+            section=topic.section,
+            subsection=topic.subsection,
+            prompt_theme=prompt_theme
+        )
+        
+        # Save to storage immediately
+        flashcards_storage[flashcard_id] = flashcard.dict()
+        return flashcard
+        
+    except Exception as e:
+        logger.error(f"Error generating explanation for {topic.name}: {str(e)}")
+        flashcard = Flashcard(
+            id=flashcard_id,
+            topic=topic.name,
+            subject=topic.subject,
+            explanation=f"Error: {str(e)}",
+            chat_history=[],
+            section=topic.section,
+            subsection=topic.subsection,
+            prompt_theme=prompt_theme
+        )
+        flashcards_storage[flashcard_id] = flashcard.dict()
+        return flashcard
+
+
+@app.post("/api/generate-flashcards", response_model=FlashcardsResponse)
+async def generate_flashcards(request: GenerateFlashcardsRequest):
+    """Generate flashcards from topics in parallel and save to storage."""
+    logger.info("=" * 80)
+    logger.info(f"Generating flashcards for {len(request.topics)} topics (parallel)")
+    
+    # Process topics in parallel batches of 5 to avoid rate limits
+    BATCH_SIZE = 5
+    flashcards = []
+    
+    for i in range(0, len(request.topics), BATCH_SIZE):
+        batch = request.topics[i:i + BATCH_SIZE]
+        logger.info(f"Processing batch {i // BATCH_SIZE + 1} ({len(batch)} topics)")
+        
+        # Run batch in parallel
+        tasks = [generate_single_flashcard(topic, request.prompt_theme) for topic in batch]
+        batch_results = await asyncio.gather(*tasks)
+        flashcards.extend(batch_results)
+        
+        # Small delay between batches to avoid rate limiting
+        if i + BATCH_SIZE < len(request.topics):
+            await asyncio.sleep(0.5)
     
     # Save all flashcards to disk
     save_flashcards_to_disk()
     
-    logger.info(f"Generated and saved {len(flashcards)} flashcards")
+    logger.info(f"Generated and saved {len(flashcards)} flashcards (parallel)")
     logger.info("=" * 80)
     
     return FlashcardsResponse(flashcards=flashcards)
+
+
+@app.post("/api/generate-flashcards-stream")
+async def generate_flashcards_stream(request: GenerateFlashcardsRequest):
+    """Generate flashcards with streaming progress updates."""
+    
+    async def event_generator():
+        total = len(request.topics)
+        completed = 0
+        flashcards = []
+        
+        # Send initial status
+        yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+        
+        # Process in parallel batches
+        BATCH_SIZE = 5
+        
+        for i in range(0, total, BATCH_SIZE):
+            batch = request.topics[i:i + BATCH_SIZE]
+            
+            # Send batch start with topic IDs for visual indication
+            yield f"data: {json.dumps({'type': 'batch_start', 'batch': i // BATCH_SIZE + 1, 'topics': [t.name for t in batch], 'topic_ids': [t.id for t in batch]})}\n\n"
+            
+            # Run batch in parallel
+            tasks = [generate_single_flashcard(topic, request.prompt_theme) for topic in batch]
+            batch_results = await asyncio.gather(*tasks)
+            
+            for flashcard in batch_results:
+                flashcards.append(flashcard)
+                completed += 1
+                
+                # Send progress update for each completed flashcard
+                yield f"data: {json.dumps({'type': 'progress', 'completed': completed, 'total': total, 'topic': flashcard.topic, 'subject': flashcard.subject})}\n\n"
+            
+            # Small delay between batches
+            if i + BATCH_SIZE < total:
+                await asyncio.sleep(0.3)
+        
+        # Save all to disk
+        save_flashcards_to_disk()
+        
+        # Send completion
+        yield f"data: {json.dumps({'type': 'complete', 'total': len(flashcards)})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @app.post("/api/flashcards", response_model=Flashcard)
@@ -886,7 +1014,9 @@ Explanation:"""
         topic=request.topic,
         subject=request.subject,
         explanation=explanation,
-        chat_history=[]
+        chat_history=[],
+        section=request.section,
+        subsection=request.subsection
     )
     
     # Save to storage
@@ -916,7 +1046,7 @@ async def get_flashcard(flashcard_id: str):
 
 @app.put("/api/flashcards/{flashcard_id}")
 async def update_flashcard(flashcard_id: str, request: UpdateFlashcardRequest):
-    """Update flashcard topic or explanation."""
+    """Update flashcard topic, explanation, subject, section, or subsection."""
     if flashcard_id not in flashcards_storage:
         raise HTTPException(status_code=404, detail="Flashcard not found")
     
@@ -924,8 +1054,15 @@ async def update_flashcard(flashcard_id: str, request: UpdateFlashcardRequest):
         flashcards_storage[flashcard_id]["topic"] = request.topic
     if request.explanation is not None:
         flashcards_storage[flashcard_id]["explanation"] = request.explanation
+    if request.subject is not None:
+        flashcards_storage[flashcard_id]["subject"] = request.subject
+    if request.section is not None:
+        flashcards_storage[flashcard_id]["section"] = request.section if request.section else None
+    if request.subsection is not None:
+        flashcards_storage[flashcard_id]["subsection"] = request.subsection if request.subsection else None
     
     save_flashcards_to_disk()
+    logger.info(f"Updated flashcard {flashcard_id}")
     
     return Flashcard(**flashcards_storage[flashcard_id])
 
@@ -1340,6 +1477,169 @@ Generate a natural, conversational podcast script that covers all these topics i
     except Exception as e:
         logger.error(f"Error generating podcast: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class DistillSummaryResponse(BaseModel):
+    subject: str
+    summary: str
+    user_prompt: str
+    generated_at: str
+
+
+@app.post("/api/distill-subject/{subject}")
+async def distill_subject(subject: str, request: DistillSectionRequest):
+    """
+    Distill the most important information from a subject based on user context.
+    Results are cached by subject + user_prompt combination.
+    """
+    logger.info("=" * 80)
+    logger.info(f"Distilling subject: {subject}")
+    logger.info(f"User prompt: {request.user_prompt[:100]}...")
+    
+    # Get all flashcards for this subject
+    subject_flashcards = [
+        Flashcard(**fc_data)
+        for fc_data in flashcards_storage.values()
+        if fc_data.get("subject") == subject
+    ]
+    
+    if not subject_flashcards:
+        raise HTTPException(status_code=404, detail=f"No flashcards found for subject: {subject}")
+    
+    # Create cache key based on subject + user prompt
+    cache_content = f"{subject}:{request.user_prompt}"
+    cache_key = f"distill_{hashlib.md5(cache_content.encode()).hexdigest()[:16]}"
+    
+    # Check cache
+    if cache_key in prompt_cache:
+        cached = prompt_cache[cache_key]
+        logger.info(f"Returning cached distillation for {subject}")
+        return DistillSummaryResponse(
+            subject=subject,
+            summary=cached["summary"],
+            user_prompt=cached["user_prompt"],
+            generated_at=cached["generated_at"]
+        )
+    
+    # Build content summary
+    content_summary = f"Subject: {subject}\n\nTopics:\n"
+    
+    # Organize by section/subsection
+    by_section = {}
+    no_section = []
+    
+    for fc in subject_flashcards:
+        section = fc.section
+        subsection = fc.subsection
+        
+        if not section:
+            no_section.append(fc)
+        else:
+            if section not in by_section:
+                by_section[section] = {"subsections": {}, "direct": []}
+            
+            if not subsection:
+                by_section[section]["direct"].append(fc)
+            else:
+                if subsection not in by_section[section]["subsections"]:
+                    by_section[section]["subsections"][subsection] = []
+                by_section[section]["subsections"][subsection].append(fc)
+    
+    # Add unorganized flashcards
+    if no_section:
+        for fc in no_section:
+            content_summary += f"- {fc.topic}: {fc.explanation}\n"
+    
+    # Add organized content
+    for section_name, section_data in by_section.items():
+        content_summary += f"\n§ {section_name}:\n"
+        
+        for fc in section_data["direct"]:
+            content_summary += f"  - {fc.topic}: {fc.explanation}\n"
+        
+        for subsection_name, subsection_cards in section_data["subsections"].items():
+            content_summary += f"\n  › {subsection_name}:\n"
+            for fc in subsection_cards:
+                content_summary += f"    - {fc.topic}: {fc.explanation}\n"
+    
+    # Generate distilled summary with AI
+    system_prompt = """You are an expert educator and career advisor. Your task is to distill the most important information from a subject based on who the learner is and what they need.
+
+Create a focused summary that:
+- Identifies the most critical concepts for the user's specific situation
+- Prioritizes practical, actionable knowledge
+- Highlights key relationships between concepts
+- Notes common pitfalls or frequently tested areas
+- Provides a clear learning path or priority order
+
+Be direct and practical. Focus on what matters most for their goals."""
+
+    prompt = f"""User context: {request.user_prompt}
+
+Here's all the content from the subject "{subject}":
+
+{content_summary[:12000]}
+
+Based on who this learner is and what they need, create a focused summary of the most important things they should know. Prioritize and organize the information for their specific situation."""
+
+    try:
+        summary = await call_claude(prompt, system_prompt, max_tokens=8192)
+        
+        # Cache the result
+        distill_data = {
+            "subject": subject,
+            "summary": summary.strip(),
+            "user_prompt": request.user_prompt,
+            "generated_at": datetime.now().isoformat()
+        }
+        
+        prompt_cache[cache_key] = distill_data
+        save_cache_to_disk(cache_key, distill_data)
+        
+        logger.info(f"Generated distilled summary: {len(summary)} characters")
+        logger.info("=" * 80)
+        
+        return DistillSummaryResponse(
+            subject=subject,
+            summary=summary.strip(),
+            user_prompt=request.user_prompt,
+            generated_at=distill_data["generated_at"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error distilling subject: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/cached-distill-prompts/{subject}")
+async def get_cached_distill_prompts(subject: str):
+    """Get all cached distill prompts for a subject."""
+    logger.info(f"Getting cached distill prompts for subject: {subject}")
+    
+    # Use dict to deduplicate by user_prompt, keeping most recent
+    prompts_by_content = {}
+    prefix = "distill_"
+    
+    for cache_key, data in prompt_cache.items():
+        if cache_key.startswith(prefix) and data.get("subject") == subject:
+            user_prompt = data.get("user_prompt", "")
+            generated_at = data.get("generated_at", "")
+            
+            # Only keep the most recent version of each unique prompt
+            if user_prompt not in prompts_by_content or generated_at > prompts_by_content[user_prompt]["generated_at"]:
+                prompts_by_content[user_prompt] = {
+                    "subject": data.get("subject"),
+                    "user_prompt": user_prompt,
+                    "cache_key": cache_key,
+                    "generated_at": generated_at
+                }
+    
+    cached_prompts = list(prompts_by_content.values())
+    
+    # Sort by generated_at descending
+    cached_prompts.sort(key=lambda x: x.get("generated_at", ""), reverse=True)
+    
+    return {"prompts": cached_prompts}
 
 
 if __name__ == "__main__":

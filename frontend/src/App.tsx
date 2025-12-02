@@ -10,7 +10,7 @@ import {
   extractTopics,
   extractTopicsIntelligent,
   extractTopicsFromImage,
-  generateFlashcards,
+  generateFlashcardsStream,
   getAllFlashcards,
   createFlashcard,
   updateFlashcard,
@@ -22,6 +22,7 @@ import {
   explainTopic, 
   APIError 
 } from './services/api';
+import type { GenerationProgress } from './types';
 
 function App() {
   const [cachedPrompts, setCachedPrompts] = useState<CachedPrompt[]>([]);
@@ -36,6 +37,8 @@ function App() {
   const [cacheInfo, setCacheInfo] = useState<string | null>(null);
   const [showWiki, setShowWiki] = useState(false);
   const [showLearnMode, setShowLearnMode] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<GenerationProgress | undefined>(undefined);
+  const [processingTopicIds, setProcessingTopicIds] = useState<string[]>([]);
 
   // Load cached prompts and saved flashcards on mount
   useEffect(() => {
@@ -258,17 +261,41 @@ function App() {
     setTopics(updatedTopics);
   };
 
-  const handleGenerateFlashcards = async () => {
+  const handleGenerateFlashcards = async (selectedTopicIds: string[]) => {
     setIsGeneratingFlashcards(true);
     setError(null);
+    setGenerationProgress(undefined);
+    setProcessingTopicIds([]);
+    
+    // Filter topics to only include selected ones
+    const selectedTopics = topics.filter(t => selectedTopicIds.includes(t.id));
+    
+    if (selectedTopics.length === 0) {
+      setError('No topics selected');
+      setIsGeneratingFlashcards(false);
+      return;
+    }
     
     try {
-      const response = await generateFlashcards(topics, originalText);
+      await generateFlashcardsStream(
+        selectedTopics, 
+        originalText,
+        promptTheme,
+        (progress) => {
+          setGenerationProgress(progress as GenerationProgress);
+          // Track which topics are currently being processed
+          if (progress.type === 'batch_start' && progress.topic_ids) {
+            setProcessingTopicIds(progress.topic_ids as string[]);
+          } else if (progress.type === 'complete') {
+            setProcessingTopicIds([]);
+          }
+        }
+      );
       
-      // Add to existing flashcards and reload from server
+      // Reload flashcards from server
       await loadSavedFlashcards();
       
-      setCacheInfo(`✓ Generated ${response.flashcards.length} flashcards`);
+      setCacheInfo(`✓ Generated ${selectedTopics.length} flashcards`);
     } catch (err) {
       if (err instanceof APIError) {
         setError(err.message);
@@ -278,10 +305,12 @@ function App() {
       console.error('Error generating flashcards:', err);
     } finally {
       setIsGeneratingFlashcards(false);
+      setGenerationProgress(undefined);
+      setProcessingTopicIds([]);
     }
   };
 
-  const handleUpdateFlashcard = async (id: string, field: 'topic' | 'explanation', value: string) => {
+  const handleUpdateFlashcard = async (id: string, field: 'topic' | 'explanation' | 'subject' | 'section' | 'subsection', value: string) => {
     try {
       const updated = await updateFlashcard(id, field, value);
       setFlashcards(prev => prev.map(card => card.id === id ? updated : card));
@@ -417,7 +446,9 @@ function App() {
     subject: string,
     explanation: string,
     generateExplanation: boolean,
-    context: string
+    context: string,
+    section?: string,
+    subsection?: string
   ) => {
     try {
       const newFlashcard = await createFlashcard(
@@ -425,7 +456,9 @@ function App() {
         subject,
         generateExplanation ? undefined : explanation,
         generateExplanation,
-        context
+        context,
+        section,
+        subsection
       );
       
       setFlashcards(prev => [...prev, newFlashcard]);
@@ -548,6 +581,9 @@ function App() {
             onUpdateTopics={handleUpdateTopics}
             onGenerateFlashcards={handleGenerateFlashcards}
             isGenerating={isGeneratingFlashcards}
+            isExtractingTopics={isExtractingTopics}
+            generationProgress={generationProgress}
+            processingTopicIds={processingTopicIds}
           />
         )}
 

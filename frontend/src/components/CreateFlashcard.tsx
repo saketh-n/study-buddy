@@ -6,7 +6,9 @@ interface CreateFlashcardProps {
     subject: string,
     explanation: string,
     generateExplanation: boolean,
-    context: string
+    context: string,
+    section?: string,
+    subsection?: string
   ) => Promise<void>;
 }
 
@@ -14,6 +16,8 @@ export const CreateFlashcard = ({ onCreateFlashcard }: CreateFlashcardProps) => 
   const [isExpanded, setIsExpanded] = useState(false);
   const [topic, setTopic] = useState('');
   const [subject, setSubject] = useState('');
+  const [section, setSection] = useState('');
+  const [subsection, setSubsection] = useState('');
   const [explanation, setExplanation] = useState('');
   const [context, setContext] = useState('');
   const [useAI, setUseAI] = useState(false);
@@ -37,12 +41,16 @@ export const CreateFlashcard = ({ onCreateFlashcard }: CreateFlashcardProps) => 
         subject.trim(),
         explanation.trim(),
         useAI,
-        context.trim()
+        context.trim(),
+        section.trim() || undefined,
+        subsection.trim() || undefined
       );
       
       // Reset form
       setTopic('');
       setSubject('');
+      setSection('');
+      setSubsection('');
       setExplanation('');
       setContext('');
       setUseAI(false);
@@ -114,6 +122,34 @@ export const CreateFlashcard = ({ onCreateFlashcard }: CreateFlashcardProps) => 
                   className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition"
                   required
                 />
+              </div>
+
+              {/* Section and Subsection */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Section (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={section}
+                    onChange={(e) => setSection(e.target.value)}
+                    placeholder="e.g., TCP/IP"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Subsection (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={subsection}
+                    onChange={(e) => setSubsection(e.target.value)}
+                    placeholder="e.g., Handshake"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 transition"
+                  />
+                </div>
               </div>
 
               {/* AI Generation Toggle */}
@@ -192,6 +228,8 @@ export const CreateFlashcard = ({ onCreateFlashcard }: CreateFlashcardProps) => 
                   onClick={() => {
                     setTopic('');
                     setSubject('');
+                    setSection('');
+                    setSubsection('');
                     setExplanation('');
                     setContext('');
                     setUseAI(false);

@@ -318,7 +318,9 @@ export async function createFlashcard(
   subject: string,
   explanation?: string,
   generateExplanation: boolean = false,
-  context?: string
+  context?: string,
+  section?: string,
+  subsection?: string
 ): Promise<Flashcard> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/flashcards`, {
@@ -332,6 +334,8 @@ export async function createFlashcard(
         explanation,
         generate_explanation: generateExplanation,
         context,
+        section: section || null,
+        subsection: subsection || null,
       }),
     });
 
@@ -384,6 +388,135 @@ export async function organizeFlashcards(flashcardIds: string[]): Promise<{ mess
     }
     throw new APIError(
       `Failed to organize flashcards: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * List cached distill prompts for a subject
+ */
+export async function listCachedDistillPrompts(subject: string): Promise<{ subject: string; user_prompt: string; cache_key: string; generated_at: string }[]> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/cached-distill-prompts/${encodeURIComponent(subject)}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data = await response.json();
+    return data.prompts || [];
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to list cached distill prompts: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Distill subject information based on user context
+ */
+export async function distillSubject(
+  subject: string, 
+  userPrompt: string = "I am a software engineer with a few years of experience preparing for the next step in my career. What are the most important things to know?"
+): Promise<{ subject: string; summary: string; user_prompt: string; generated_at: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/distill-subject/${encodeURIComponent(subject)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ user_prompt: userPrompt }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to distill subject: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+/**
+ * Generate flashcards with streaming progress updates
+ */
+export async function generateFlashcardsStream(
+  topics: Topic[],
+  originalText?: string,
+  promptTheme?: string,
+  onProgress?: (progress: { type: string; completed?: number; total?: number; topic?: string; subject?: string; batch?: number; topics?: string[]; topic_ids?: string[] }) => void
+): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/generate-flashcards-stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ topics, original_text: originalText, prompt_theme: promptTheme }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new APIError(
+        errorData.detail || `HTTP error! status: ${response.status}`,
+        response.status
+      );
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new APIError('No response body');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            onProgress?.(data);
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof APIError) {
+      throw error;
+    }
+    throw new APIError(
+      `Failed to generate flashcards: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   }
 }
@@ -453,11 +586,15 @@ export async function getAllFlashcards(): Promise<FlashcardsResponse> {
 }
 
 /**
- * Update a flashcard's topic or explanation
+ * Update a flashcard's topic, explanation, subject, section, or subsection
  */
-export async function updateFlashcard(id: string, field: 'topic' | 'explanation', value: string): Promise<Flashcard> {
+export async function updateFlashcard(
+  id: string, 
+  field: 'topic' | 'explanation' | 'subject' | 'section' | 'subsection', 
+  value: string
+): Promise<Flashcard> {
   try {
-    const body = field === 'topic' ? { topic: value } : { explanation: value };
+    const body: Record<string, string> = { [field]: value };
     
     const response = await fetch(`${API_BASE_URL}/api/flashcards/${id}`, {
       method: 'PUT',
